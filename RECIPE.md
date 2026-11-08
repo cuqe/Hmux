@@ -23,12 +23,11 @@ one slightly lighter background when active.
 - Sidebar toggle (`layout.toggle`), leftmost, active while the sidebar shows.
 - Bell with a count badge: a 13px accent circle, 8.5px semibold
   `accent_foreground` text, showing up to `9+`.
-- A 1px `border` divider at the sidebar's edge, full height of the title bar,
-  then the session's folder: the macOS folder icon at 14px and the focused
-  pane's working path (`~/…`, 11.5px `muted`, capped 300px), then empty space.
-  The left group (traffic-light inset and both buttons) is exactly the sidebar's
-  width, so the divider sits on the sidebar's right edge and moves when the
-  sidebar is resized — in line with the pane tabs below, like cmux.
+- The session's folder: the macOS folder icon at 14px and the focused pane's
+  working path (`~/…`, 11.5px `muted`, capped 300px), then empty space. The
+  title bar lives in the work column, so it starts exactly at the body's
+  divider — there is no line of its own. With the sidebar hidden it starts at
+  the window edge with an 88px inset for the traffic lights.
 - Sun (in the dark theme) or moon (in the light theme) — the theme button.
 - `+` — new session in the current space (`tab.new`).
 
@@ -65,8 +64,9 @@ the Session footer, which stays pinned at the bottom.
   here is lighter, which is the tell.)
 - **Machine groups.** Every session on an SSH machine — including the
   `login <machine>` tab that opened it — groups under the machine's name with a
-  server icon, always shown (even with one session), so a new remote terminal
-  never falls into `UNGROUPED`. Local sessions keep their folder groups.
+  server icon, always shown (even with one session) and placed at the bottom of
+the Sessions list, so a new remote terminal never falls into `UNGROUPED`.
+Local sessions keep their folder groups.
 - **The `UNGROUPED` rule** — a 9.5px semibold `dim` label followed by a 1px
   `border` line, shown only when some groups exist above; the sessions under it
   are in no group.
@@ -96,7 +96,7 @@ the Session footer, which stays pinned at the bottom.
   forgets the machine while its terminals keep running). Their sessions are in
   the Sessions list under the machine's name.
 
-**Pane tabs — 30px, one bar per pane.** The terminal glyph (`>_`), the title,
+**Pane tabs — 30px, one bar per pane.** The macOS Terminal icon, the title,
 a close ×, then split-right, split-down and zoom. The focused pane is the page
 color with a 2px accent line along its top; the others sit on `chrome`. The
 session's folder is in the title bar, like cmux.
@@ -211,27 +211,34 @@ Reduce Motion. Elapsed labels refresh every 30s; nothing else polls.
 
 ## Built from
 
-**Layout `layouts/hmux.json`** — root `column`:
+**Layout `layouts/hmux.json`** — root `column` with one `body` row (divider
+1px `border` — the layout's only vertical line):
 
 - root look: `theme {light: "hmux-white", dark: "hmux-black"}`, font Menlo 13px,
-  ui font Geist, `terminal_padding [4,6]`, `titlebar "none"`, `movable: false`,
+  ui font Geist, `terminal_padding [4,6]`, `titlebar "none"`,
   `traffic_lights [12,10]`, background gradient `[wash_top, wash_bottom]` at
   160°, `preview "layouts/hmux.svg"`.
-- `titlebar` — `block`, 32px, `window_drag: true`, background `glass`,
-  `content {mod: "hmux", props: {role: "top"}}`.
-- `body` — `row` (divider 1px `edge`) of two children:
-  - `sidebar` — `column`, 232px, min 180, max 380, background `glass`, one
-    block `{mod: "hmux", props: {role: "sidebar"}}`.
-  - `work` — `column`, `resizable: false`, one child:
-    `main` — `block`, background `hairline`, `content`:
-    `{tab: "active", pane: {gap: 1, radius: 0, background: "background",
-    lone: true, border {width: 0}, focus {width: 1, color: "focusring"},
-    header {content: {mod: "hmux", props: {role: "pane"}}, height: 30,
-    position: "top", reveal: "always"}}}`.
+- `body` — `row`, 1px `border` divider, two children:
+  - `sidebar` — `column`, 232px, min 180, max 380, background `glass`:
+    - `sidebar-top` — `block`, 32px, `window_drag: true`, background `glass`,
+      `content {mod: "hmux", props: {role: "spacer"}}` (empty; the traffic
+      lights sit over it).
+    - `sidebar-body` — `block`, `{mod: "hmux", props: {role: "sidebar"}}`.
+  - `work` — `column`, `resizable: false`:
+    - `titlebar` — `block`, 32px, `window_drag: true`, background `glass`,
+      `content {mod: "hmux", props: {role: "top"}}`.
+    - `main` — `block`, background `hairline`, `content`:
+      `{tab: "active", pane: {gap: 1, radius: 0, background: "background",
+      lone: true, border {width: 0}, focus {width: 1, color: "focusring"},
+      header {content: {mod: "hmux", props: {role: "pane"}}, height: 30,
+      position: "top", reveal: "always"}}}`.
 
-**`mods/hmux`** — one View class with seven roles read from
-`props().role`: `top`, `sidebar` (default), `pane`, `inbox`, `menu`, `confirm`,
-`fade`. It imports `View, div, svg, image` from `gpui-kit`, `v_flex, h_flex,
+The body row's divider is the single vertical line: the title bar lives inside
+the work column, so nothing else draws a line.
+
+**`mods/hmux`** — one View class with eight roles read from
+`props().role`: `top`, `spacer`, `sidebar` (default), `pane`, `inbox`, `menu`,
+`confirm`, `fade`. It imports `View, div, svg, image` from `gpui-kit`, `v_flex, h_flex,
 InputState, Input` from `gpui-base`, and from `herdr`: `agents, spaces, panes,
 focused, machines, terminals, props, run, theme, settings, appHome,
 readTextFile, writeTextFile, notify, shared, setShared, openOverlay,
@@ -321,10 +328,9 @@ blocked `#ff9f0a`, done `#30d158`, glass `#1e1e23`, edge `#ffffff14`, wash
   focus the agent, it only drops the entry.
 - **The folder icon** in the title bar is Apple's system artwork
   (`folder-macos.png`); see THIRD_PARTY_NOTICES.md.
-- **The title-bar divider is one line with the sidebar's border.** The sidebar
-  writes its measured width to `hmux.sidebarW` on every size change (unzoomed
-  layout px), so the title-bar divider and the body's sidebar border share the
-  same x and color (`border`).
+- **One vertical line.** The body row's divider is the only line between the
+  sidebar and the work column; the title bar sits inside the work column and
+  draws none. `hmux.sidebarW` still tracks the sidebar for the fade cover.
 - **Move beside uses tab order.** A drop calls `pane.swap` left/right by the
   tabs' order, which is exact for side-by-side splits; for a stacked split use
   the tab's right-click Move up/down. `pane.swap` is geometric, so a very

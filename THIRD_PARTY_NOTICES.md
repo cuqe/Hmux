@@ -57,9 +57,10 @@ SOFTWARE.
 
 ## Apple system folder icon
 
-`mods/hmux/folder-macos.png` is extracted from macOS
-(`GenericFolderIcon.icns` in CoreTypes.bundle) and is Apple system artwork.
-It is not covered by this repository's MIT license.
+`mods/hmux/folder-macos.png` and `mods/hmux/terminal-macos.png` are extracted
+from macOS (`GenericFolderIcon.icns` in CoreTypes.bundle and Terminal.app's
+`Terminal.icns`) and are Apple system artwork. They are not covered by this
+repository's MIT license.
 
 ## Herdr
 

@@ -55,6 +55,7 @@ const ICON = {
   link: "mods/hmux/link.svg",
   folderMac: "mods/hmux/folder-macos.png",
   terminal: "mods/hmux/terminal.svg",
+  terminalMac: "mods/hmux/terminal-macos.png",
   tail: "mods/hmux/popover-tail.svg",
   tailOutline: "mods/hmux/popover-tail-outline.svg",
 };
@@ -330,6 +331,7 @@ export default class Hmux extends View {
 
   render(cx) {
     const role = props()?.role ?? "sidebar";
+    if (role === "spacer") return div();
     if (role === "top") return this.renderTop();
     if (role === "fade") return this.renderFade();
     if (role === "pane") return this.renderPane();
@@ -365,25 +367,25 @@ export default class Hmux extends View {
       );
     const sideNode = findNode(layout(), "sidebar");
     const measured = Number(shared(SIDEBAR_W) ?? 0);
-    const sideW = sidebarHidden ? 128 : (measured > 0 ? measured : (sideNode?.size?.px ?? 232));
+    const sideW = measured > 0 ? measured : (sideNode?.size?.px ?? 232);
     return h_flex()
       .id("hmux-top")
       .on_size_change((size) => {
-        this.topWidth = size.width; // the window's width in mod pixels, for the crossfade cover
+        this.topWidth = size.width;
       })
       .size_full()
+      // The title bar lives in the work column, so the body's divider is the
+      // only vertical line. With the sidebar hidden it starts at the window
+      // edge and leaves room for the traffic lights.
+      .pl(sidebarHidden ? 88 : 10)
       .pr(8)
+      .gap(2)
       .items_center()
       .text_size(11.5)
-      // The traffic lights and the two buttons sit over the sidebar; the folder
-      // icon starts exactly at the sidebar's right edge, in line with the tabs.
-      .child(
-        h_flex().w(sideW).pl(78).pr(8).gap(2).items_center().flex_none()
-          .child(iconButton(t, "hmux-top-sidebar", ICON.sidebar, () => run("layout.toggle", { id: "sidebar" }), 13, { active: !sidebarHidden }))
-          .child(bell),
-      )
-      .when(!sidebarHidden, (el) => el.child(div().flex_none().w(1).h_full().bg(t.border)))
-      .child(div().flex_none().w(10))      // The session's folder, like cmux: the macOS folder icon and its path.
+      .child(iconButton(t, "hmux-top-sidebar", ICON.sidebar, () => run("layout.toggle", { id: "sidebar" }), 13, { active: !sidebarHidden }))
+      .child(bell)
+      .child(div().flex_none().w(6))
+      // The session's folder, like cmux: the macOS folder icon and its path.
       .child(image(ICON.folderMac).w(14).h(14).flex_none())
       .child(div().flex_none().max_w(300).truncate().px(6).text_color(t.muted).child(cwd))
       .child(div().flex_1())
@@ -443,8 +445,12 @@ export default class Hmux extends View {
         const shot = await exec("herdr-app", ["shot", `${appHome()}/${rel}`]);
         if (shot.code !== 0) throw new Error(shot.stderr);
         const bounds = JSON.parse((await readTextFile(`${appHome()}/window.json`)) ?? "{}").bounds;
-        // The title bar reports window points; the cover's pixels get zoomed, so divide the zoom out.
-        const width = this.topWidth / (settings()?.zoom ?? 1);
+        // The title bar reports the work column; add the sidebar back for a
+        // cover the size of the whole window. The cover's pixels get zoomed,
+        // so divide the zoom out.
+        const sideHidden = Boolean(findNode(layout(), "sidebar")?.hidden);
+        const full = this.topWidth + (sideHidden ? 0 : Number(shared(SIDEBAR_W) ?? 232));
+        const width = full / (settings()?.zoom ?? 1);
         const height = bounds ? (width * bounds[3]) / bounds[2] : width * 0.66;
         openOverlay({
           mod: "hmux",
@@ -1204,6 +1210,8 @@ export default class Hmux extends View {
     const addGroup = iconButton(t, "hmux-group-new", ICON.folderPlus, () => this.createGroup(), 11);
     const addSession = iconButton(t, "hmux-session-new", ICON.plus, () => run("tab.new", {}), 11);
     const auto = autoGroups();
+    const localAuto = auto.filter((a) => !a.machine);
+    const machineAuto = auto.filter((a) => a.machine);
     const loose = sessionsIn(UNGROUPED);
     const separated = (groups().length > 0 || auto.length > 0) && loose.length > 0;
     return v_flex()
@@ -1218,7 +1226,7 @@ export default class Hmux extends View {
           .child(sectionTitle(t, "Sessions", null, h_flex().gap(1).child(addGroup).child(addSession))),
       )
       .children(groups().map((g) => this.groupBlock(t, g)))
-      .children(auto.map((a) => this.autoGroupBlock(t, a)))
+      .children(localAuto.map((a) => this.autoGroupBlock(t, a)))
       // Sessions in no group sit below their own label, so they never read as a
       // group's children.
       .when(separated, (el) =>
@@ -1228,7 +1236,9 @@ export default class Hmux extends View {
             .child(div().flex_1().h(1).bg(t.border)),
         ),
       )
-      .child(this.rowsBlock(t, UNGROUPED));
+      .child(this.rowsBlock(t, UNGROUPED))
+      // Each machine's sessions at the very bottom, under the machine.
+      .children(machineAuto.map((a) => this.autoGroupBlock(t, a)));
   }
 
   // An automatic group: the sessions that share one working folder. Unlike a
@@ -1470,6 +1480,9 @@ export default class Hmux extends View {
         .text_size(11.5)
         .hover((s) => s.bg(t.hover))
         .on_click(() => {
+          const now = Date.now();
+          if (this.machineClick && now - this.machineClick < 350) return; // a double-click is still one action
+          this.machineClick = now;
           if (m.layout === "unavailable") {
             // Offline: open the core's login prompt in a fresh session, so the
             // password (or code) can be typed right here.
@@ -1581,7 +1594,7 @@ export default class Hmux extends View {
         openMenu({ kind: "panetab", id: pane }, e.position);
       })
       .on_click(() => run("pane.focus", { pane }))
-      .child(svg(ICON.terminal).size(11).flex_none().text_color(p.focused ? t.foreground : t.dim))
+      .child(image(ICON.terminalMac).w(13).h(13).flex_none())
       .child(div().flex_none().max_w(220).truncate().font_medium().text_color(p.focused ? t.foreground : t.muted).child(name))
       .child(close)
       .child(div().flex_1())

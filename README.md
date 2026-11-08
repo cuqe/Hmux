@@ -14,10 +14,11 @@ session menu uses Finder and `pbcopy`).
 
 ## What you get
 
-- **Title bar (32px):** sidebar toggle, notification bell with an unread badge,
-  a full-height divider at the sidebar's edge, then the macOS folder icon and
-  the selected session's working path. On the right, the sun/moon theme switch
-  and new session. Drag the window by this bar; double-click maximizes.
+- **Title bar (32px):** it starts at the sidebar's divider (the layout's one
+  vertical line) with the sidebar toggle, notification bell and unread badge,
+  then the macOS folder icon and the selected session's working path. On the
+  right, the sun/moon theme switch and new session. Drag the window by this
+  bar (or by the strip above the sidebar); double-click maximizes.
 - **Agents:** one compact line per agent with its program icon and status; the
   header folds the whole section. Pinned agents stay on top, then by urgency:
   needs you, done, working, idle. Sub-agents nest under the agent that started
@@ -31,7 +32,8 @@ session menu uses Finder and `pbcopy`).
     group** on their own (macOS folder icon, same shade as a manual group). It
     appears and dissolves as sessions start, end or `cd` — no setup. A session
     you put in a manual group stays there. A whole SSH machine (its sessions
-    and its login) groups under the machine's name with a server icon.
+    and its login) groups under the machine's name with a server icon, at the
+    bottom of the Sessions list.
   - Sessions in no group sit below an `UNGROUPED` rule, so they never read as a
     group's children.
   - SSH sessions are in the same list too; click one to switch straight to it.
@@ -44,10 +46,10 @@ session menu uses Finder and `pbcopy`).
     Sessions header to take it back out. Dragging inside a group reorders it.
   - Click a group to fold it; double-click to rename; right-click for Rename
     and Delete (deleting a group keeps its sessions, ungrouped).
-- **Pane tabs:** each pane carries its own cmux-style tab bar — terminal glyph,
-  title, ×, then split and zoom tools; the focused tab is white with a thin
-  accent line on top. Drag panes with the native grip on a pane's top edge;
-  right-click a tab for Move left/right/up/down and Close.
+- **Pane tabs:** each pane carries its own cmux-style tab bar — the macOS
+  Terminal icon, title, ×, then split and zoom tools; the focused tab is white
+  with a thin accent line on top. Drag panes with the native grip on a pane's
+  top edge; right-click a tab for Move left/right/up/down and Close.
 - **Session footer:** status counts, the focused pane's folder and branch, and
   `This Mac + N` — each SSH machine with its connection state. Click an offline
   machine to open its login prompt (type the password or code right there; that

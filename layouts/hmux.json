@@ -28,21 +28,6 @@
   "preview": "layouts/hmux.svg",
   "children": [
     {
-      "id": "titlebar",
-      "type": "block",
-      "size": {
-        "px": 32
-      },
-      "window_drag": true,
-      "background": "glass",
-      "content": {
-        "mod": "hmux",
-        "props": {
-          "role": "top"
-        }
-      }
-    },
-    {
       "id": "body",
       "type": "row",
       "divider": {
@@ -61,6 +46,21 @@
           "background": "glass",
           "children": [
             {
+              "id": "sidebar-top",
+              "type": "block",
+              "size": {
+                "px": 32
+              },
+              "window_drag": true,
+              "background": "glass",
+              "content": {
+                "mod": "hmux",
+                "props": {
+                  "role": "spacer"
+                }
+              }
+            },
+            {
               "id": "sidebar-body",
               "type": "block",
               "content": {
@@ -77,6 +77,21 @@
           "type": "column",
           "resizable": false,
           "children": [
+            {
+              "id": "titlebar",
+              "type": "block",
+              "size": {
+                "px": 32
+              },
+              "window_drag": true,
+              "background": "glass",
+              "content": {
+                "mod": "hmux",
+                "props": {
+                  "role": "top"
+                }
+              }
+            },
             {
               "id": "main",
               "type": "block",
