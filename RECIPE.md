@@ -23,7 +23,10 @@ one slightly lighter background when active.
 The strip above the sidebar (`sidetop`) holds the sidebar toggle
 (`layout.toggle`) and the bell with its count badge (a 13px accent circle,
 8.5px semibold `accent_foreground`, up to `9+`) — cmux's top-left, with the
-traffic lights over it. With the sidebar hidden the title bar carries both.
+traffic lights over it. In full screen (`window().fullscreen`) the traffic lights
+are gone, so the toggle and bell slide left into their room (a spacer whose
+width transitions over `duration.slow`); the title bar with the sidebar hidden
+does the same. With the sidebar hidden the title bar carries both.
 - The session's folder: the macOS folder icon at 14px and the focused pane's
   working path (`~/…`, 11.5px `muted`, capped 300px), then empty space. The
   title bar lives in the work column, so it starts exactly at the body's
@@ -107,10 +110,19 @@ a close ×, then split-right, split-down and zoom. The focused pane is the page
 color with a 2px accent line along its top; the others sit on `chrome`. The
 session's folder is in the title bar, like cmux.
 
-**Moving a pane.** Panes drag with the app's native grip on a pane's top edge
-(the smooth accent overlay comes from the app itself), and the layout keeps
-`movable` at its default. For a click-only path, right-click a pane tab for
-Focus, Move left/right/up/down (`pane.focus` + `pane.swap`) and Close pane.
+**Moving a pane.** Drag a pane tab by its icon or title (an open-hand
+pointer, `cursor_grab`, over them; a closed hand, `cursor_grabbing`, while
+held). Past 4px a floating
+copy of the tab (26px, `background` fill, `border`, large shadow, fading in
+over 120ms) follows the pointer from where it was grabbed, the tab itself
+dims to 35%, and a card (`accent` at 18% fill, 70% border, 8px corners, 4px
+inside the pane) shows where the drop lands, springing (`spring.smooth`)
+between panes and halves: the middle (and the pane's tab strip) swaps the two
+panes, the outer quarter toward an edge puts the pane beside it in that half.
+Over its own pane, or outside every pane, nothing is shown and a release
+moves nothing; Esc cancels. The layout root sets `"movable": false`, so the
+app's own top-edge grip is off. Right-click a pane tab for Focus, Move
+left/right/up/down (`pane.focus` + `pane.swap`) and Close pane.
 
 **Panes.** A 1px gap between panes, square corners, the `background` theme
 color; the focused pane gets a 1px `focusring` border. Each pane carries its
@@ -245,15 +257,17 @@ the work column, so nothing else draws a line.
 
 **`mods/hmux`** — one View class with nine roles read from
 `props().role`: `top`, `sidetop`, `spacer`, `sidebar` (default), `pane`,
-`inbox`, `menu`, `confirm`, `fade`. It imports `View, div, svg, image` from `gpui-kit`, `v_flex, h_flex,
+`inbox`, `menu`, `confirm`, `fade`, `tabdrag`. It imports `View, div, svg, image` from `gpui-kit`, `v_flex, h_flex,
 InputState, Input` from `gpui-base`, and from `herdr`: `agents, spaces, panes,
 focused, machines, terminals, props, run, theme, settings, appHome,
 readTextFile, writeTextFile, notify, shared, setShared, openOverlay,
-closeOverlay, exec`. `motion.js` holds the tokens and the Reduce Motion read.
+closeOverlay, exec`. `motion.js` holds the tokens and the Reduce Motion read;
+`panedrag.js` the pane drag's geometry and moves.
 
 State: `hmux.groups` (`[{id, name}]`), `hmux.groupOf` (`{tabId: groupId}`),
 `hmux.order` (`{u: [tabId…], <groupId>: [tabId…]}`), `hmux.sidebarW` (the
-sidebar's measured width), `hmux.inbox`, `hmux.inboxSeen`, `hmux.rename`
+sidebar's measured width), `hmux.paneRects` (each pane header's window rect),
+`hmux.grab` / `hmux.paneDrag` (the open grab handle, the tab being dragged), `hmux.inbox`, `hmux.inboxSeen`, `hmux.rename`
 (shared) and `expanded` (localStorage: which groups, spaces and
 machines are folded). Constants: `ROW = 22` (header rows), `SESSION_H = 58`
 (session rows), `DRAG_START = 4`, inbox 320×380 (header 44), menu 200×300,
@@ -263,7 +277,7 @@ Commands it runs: `layout.toggle`, `tab.new`, `space.select`, `tab.select`,
 `space.move`, `tab.move`, `tab.rename`, `space.rename`, `tab.close`,
 `space.close` (both `confirmed: true`), `agent.focus`, `terminal.pin`,
 `terminal.peek`, `terminal.keep`, `pane.split`, `pane.zoom`, `pane.close`,
-`pane.focus`, `app.settings` (the machine `+` opens `{section: "machines"}`) and
+`pane.focus`, `pane.swap`, `terminal.park`, `app.settings` (the machine `+` opens `{section: "machines"}`) and
 the machine Disconnect's `exec("hc", ["machine", "rm", name])`. The confirm
 dialog runs either a `run` command or an `exec`.
 Overlays: `hmux` (menu popup, confirm dialog, inbox popup, fade window
@@ -338,10 +352,24 @@ blocked `#ff9f0a`, done `#30d158`, glass `#1e1e23`, edge `#ffffff14`, wash
 - **One vertical line.** The body row's divider is the only line between the
   sidebar and the work column; the title bar sits inside the work column and
   draws none. `hmux.sidebarW` still tracks the sidebar for the fade cover.
-- **Move beside uses tab order.** A drop calls `pane.swap` left/right by the
-  tabs' order, which is exact for side-by-side splits; for a stacked split use
-  the tab's right-click Move up/down. `pane.swap` is geometric, so a very
-  unusual tree may land differently.
+- **A drag lives in an overlay.** Herdr gives a press's moves only to what
+  was pressed, clipped to its own box, so a pane header can't follow the
+  pointer over the terminals. Hovering a tab's icon/title opens a see-through
+  `tabdrag` window (`frame: "none"`, the whole window, at 0,0) holding a
+  handle exactly over them; moving off it closes it at once, so the app stays
+  clickable. A press on the handle grows it to the whole window, and that
+  window then has every move and the release. A plain click focuses the pane.
+- **Pane geometry comes from the headers.** Herdr exposes no pane rects. Each
+  header writes its window rect (`hmux.paneRects`) on hover and on any press
+  (`on_mouse_down_out`); a pane runs from its header down to the next header
+  below it, or the window's bottom. Overlay px are window px ÷ `settings().zoom`.
+- **Moves are park and keep.** Beside: `terminal.park` the source, wait for its
+  pane to go, `pane.focus` the target, `terminal.keep {place: right|down}`,
+  then for left/up `pane.swap` back over the target. Swap: neighbours use
+  `pane.swap`; others trade through a stand-in `spacer` mod pane holding the
+  source's slot. Stand-in and keeps split across their parent (`down` in a
+  row, `right` otherwise) so removing a pane gives its whole slot back and
+  sizes stay. Terminals keep running throughout.
 - **Forget, not disconnect.** Herdr exposes no offline toggle for a machine:
   `hc machine` has add/ls/login/update/rename/rm only. The menu's Forget runs
   `hc machine rm` (the remote terminals keep running); re-add the host from
@@ -385,8 +413,9 @@ blocked `#ff9f0a`, done `#30d158`, glass `#1e1e23`, edge `#ffffff14`, wash
 9. The title bar shows a full-height divider, then the macOS folder icon at the
    sidebar's edge and the focused session's path; each pane carries one
    cmux-style tab (terminal glyph, title, ×, tools; the focused one white with
-   a 2px accent top) — no second header row. Panes drag with the native top-edge
-   grip; right-click a tab for Move left/right/up/down.
+   a 2px accent top) — no second header row. Dragging a tab shows a floating
+   tab and a springing accent card; dropping on a pane's middle swaps, on an
+   edge places it in that half; right-click a tab for Move left/right/up/down.
 10. A machine row shows Connected/Offline; clicking an offline one opens a
     login session with the `hc machine login` prompt; clicking a connected one
     selects its first space or makes one. Right-click offers Connect/Open, New

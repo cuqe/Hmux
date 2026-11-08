@@ -6,14 +6,17 @@
 //   "menu"    right-click menus for a session (tab), a folder (space) or an agent
 //   "confirm" asks before closing a session or folder
 //   "fade"    the theme crossfade: a picture of the window that fades out over the new theme
+//   "tabdrag" a see-through window over everything while a pane tab is dragged:
+//             the floating tab and the drop preview
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import {
   agents, spaces, panes, focused, machines, terminals, props, run, theme, themes, home, layout, setAgentOrder,
-  settings, appHome, readTextFile, writeTextFile, notify, shared, setShared, openOverlay, closeOverlay, exec, nextCommand,
+  settings, appHome, window as appWindow, readTextFile, writeTextFile, notify, shared, setShared, openOverlay, closeOverlay, exec, nextCommand,
 } from "herdr";
 import { detectReducedMotion, isReduced, transition, spring, loopMs, durationMs, fadeDelay, fadeTotalMs } from "./motion.js";
+import { PANE_DRAG, publishRect, paneRects, dropAt, applyDrop } from "./panedrag.js";
 
 const ROW = 22; // header/folder row height: their lists spring by this step
 const SESSION_H = 58; // a session row: name on top, folder below (the highlight springs by this)
@@ -294,6 +297,41 @@ function subAgentsOf(address) {
 }
 const subStatus = (s) => (s === "error" ? "blocked" : s === "done" ? "idle" : s);
 
+// The grab handle over a hovered pane tab (see renderTabDrag). One at a time:
+// GRAB_KEY names the open one, and a stale mark (a layout switch closed the
+// window without clearing it) gives way after a moment.
+const GRAB_KEY = "hmux.grab"; // { pane, at } while a grab handle is open
+const GRAB_STALE = 1500;
+const DRAG_STALE = 60000; // a drag mark older than this was left behind (a reload mid-drag)
+
+function openGrab(p, name, b) {
+  const g = shared(GRAB_KEY);
+  if (g && Date.now() - g.at < GRAB_STALE) return;
+  const drag = shared(PANE_DRAG);
+  if (drag && Date.now() - (drag.at ?? 0) < DRAG_STALE) return;
+  setShared(GRAB_KEY, { pane: p.pane, at: Date.now() });
+  openOverlay({
+    mod: "hmux",
+    props: { role: "tabdrag", pane: p.pane, tab: p.tab, name, box: { x: b.x, y: b.y, w: b.width, h: b.height } },
+    kind: "window",
+    frame: "none",
+    width: 1,
+    height: 1,
+    at: { x: 0, y: 0 },
+  });
+}
+
+// Room left for the macOS window buttons. In full screen they are gone, so the
+// controls beside them slide over into their place.
+const LIGHTS_ROOM = 78;
+const LIGHTS_ROOM_BAR = 88; // the title bar, when the sidebar is hidden
+const lightsShown = () => !appWindow()?.fullscreen;
+
+// A spacer whose width springs, so controls glide rather than jump.
+function slideRoom(id, w) {
+  return div().id(id).flex_none().w(w).transition("width", transition("slow", "out"));
+}
+
 function openMenu(spec, at) {
   openOverlay({ mod: "hmux", props: { role: "menu", ...spec }, kind: "popup", width: 200, height: 300, at: at ?? "pointer" });
 }
@@ -326,6 +364,11 @@ export default class Hmux extends View {
       cx.notify();
     });
     const role = props()?.role;
+    // A drag or grab handle can't outlive a reload: clear what one left behind.
+    if (role === "top") {
+      if (shared(PANE_DRAG)) setShared(PANE_DRAG, null);
+      if (shared(GRAB_KEY)) setShared(GRAB_KEY, null);
+    }
     if (role === "top") exec("rm", ["-f", `${appHome()}/mods/hmux/.morph-backup.json`]).catch(() => {}); // the old morph's leftover
     // cmd-1…cmd-9: jump to the Nth machine session (machines in order).
     if ((role ?? "sidebar") === "sidebar") {
@@ -371,6 +414,7 @@ export default class Hmux extends View {
       });
     }
     if (role === "fade") this.startFade(cx);
+    if (role === "tabdrag") this.startTabDragView(cx);
     if (role === "confirm") {
       this.handle = cx.focus_handle();
       this.handle.focus();
@@ -385,6 +429,7 @@ export default class Hmux extends View {
     if (role === "spacer") return div();
     if (role === "top") return this.renderTop();
     if (role === "fade") return this.renderFade();
+    if (role === "tabdrag") return this.renderTabDrag();
     if (role === "pane") return this.renderPane();
     if (role === "inbox") return this.renderInbox();
     if (role === "menu") return this.renderMenu();
@@ -418,10 +463,10 @@ export default class Hmux extends View {
     return h_flex()
       .id("hmux-sidetop")
       .size_full()
-      .pl(78)
       .pr(8)
       .gap(2)
       .items_center()
+      .child(slideRoom("hmux-sidetop-room", lightsShown() ? LIGHTS_ROOM - 2 : 8))
       .child(iconButton(t, "hmux-top-sidebar", ICON.sidebar, () => run("layout.toggle", { id: "sidebar" }), 13, { active: !hidden }))
       .child(this.inboxBell(t));
   }
@@ -450,11 +495,11 @@ export default class Hmux extends View {
       // The title bar lives in the work column, so the body's divider is the
       // only vertical line. With the sidebar hidden it starts at the window
       // edge and leaves room for the traffic lights.
-      .pl(sidebarHidden ? 88 : 10)
       .pr(8)
       .gap(2)
       .items_center()
       .text_size(11.5)
+      .child(slideRoom("hmux-top-room", sidebarHidden && lightsShown() ? LIGHTS_ROOM_BAR - 2 : 8))
       .when(sidebarHidden, (el) =>
         el.child(iconButton(t, "hmux-top-sidebar", ICON.sidebar, () => run("layout.toggle", { id: "sidebar" }), 13, { active: false }))
           .child(bell)
@@ -1777,6 +1822,9 @@ export default class Hmux extends View {
     if (!p) return div();
     const pane = p.pane;
     const name = ((p.program?.agent || p.program?.shell) && p.program.name) || clean(p.title) || p.program?.name || "shell";
+    const lifted = shared(PANE_DRAG)?.pane === pane;
+    // Only a terminal pane with somewhere to go drags (not zoomed, not alone).
+    const canDrag = Boolean(p.terminal) && !p.zoomed && panes().filter((x) => x.tab === p.tab).length > 1;
     const close = div()
       .id(`hmux-pane-x-${pane}`)
       .flex_none()
@@ -1800,14 +1848,43 @@ export default class Hmux extends View {
       .border_b(1)
       .border_color(t.border)
       .text_size(11)
+      // Every press anywhere tells each header where it is, so a drag that
+      // starts next knows every pane's place.
+      .on_mouse_down_out((e) => publishRect(pane, e.bounds))
+      .on_mouse_move((e) => publishRect(pane, e.bounds))
       .on_mouse_down("right", (e, cx) => {
         cx.stop_propagation();
         openMenu({ kind: "panetab", id: pane }, e.position);
       })
       .on_click(() => run("pane.focus", { pane }))
-      .child(image(ICON.terminalMac).w(13).h(13).flex_none())
-      .child(div().flex_none().max_w(220).truncate().font_medium().text_color(p.focused ? t.foreground : t.muted).child(name))
-      .child(close)
+      .child(
+        h_flex()
+          .id(`hmux-pane-tab-${pane}`)
+          .flex_none()
+          .h_full()
+          .gap(6)
+          .items_center()
+          .opacity(lifted ? 0.35 : 1)
+          .transition("opacity", transition("fast", "out", { opacityOnly: true }))
+          .child(
+            h_flex()
+              .id(`hmux-pane-grip-${pane}`)
+              .flex_none()
+              .h_full()
+              .gap(6)
+              .items_center()
+              // Hovering the icon and title lays a see-through grab handle over
+              // them (an overlay): a press there can follow the pointer across
+              // every pane. The × stays outside it.
+              .on_mouse_move((e) => {
+                if (canDrag && e.bounds) openGrab(p, name, e.bounds);
+              })
+              .when(canDrag, (el) => el.cursor_grab())
+              .child(image(ICON.terminalMac).w(13).h(13).flex_none())
+              .child(div().flex_none().max_w(220).truncate().font_medium().text_color(p.focused ? t.foreground : t.muted).child(name)),
+          )
+          .child(close),
+      )
       .child(div().flex_1())
       .child(
         h_flex()
@@ -1818,5 +1895,200 @@ export default class Hmux extends View {
           .child(iconButton(t, `hmux-pd-${pane}`, ICON.splitDown, () => run("pane.split", { direction: "down", pane }), 11))
           .child(iconButton(t, `hmux-pz-${pane}`, p.zoomed ? ICON.unzoom : ICON.zoom, () => run("pane.zoom", { pane }), 11)),
       );
+  }
+
+  // ── pane tab drag ──────────────────────────────────────────────────────────
+  // Herdr hands a press's moves only to what was pressed, inside its own box,
+  // so a header can't follow the pointer over the terminals. Instead, hovering
+  // a tab opens this see-through window over the app with a handle exactly on
+  // the tab. Pressing the handle grows it to the whole window, and from there
+  // it has every move: past 4px a floating copy of the tab follows the pointer
+  // and a card shows where it will land, springing between panes and halves.
+  // The middle of a pane swaps with it; an edge puts it beside, in that half.
+  startTabDragView(cx) {
+    this.td = {
+      pressed: false, dragging: false, start: null, grab: { x: 12, y: 12 },
+      x: 0, y: 0, drop: null, last: null, rects: [], shown: false, busy: false, closed: false,
+    };
+    this.handle = cx.focus_handle();
+  }
+
+  closeGrab() {
+    const d = this.td;
+    if (d.closed) return;
+    d.closed = true;
+    const g = shared(GRAB_KEY);
+    if (g?.pane === props().pane) setShared(GRAB_KEY, null);
+    if (shared(PANE_DRAG)?.pane === props().pane) setShared(PANE_DRAG, null);
+    closeOverlay(props().overlay);
+  }
+
+  tabDragTrack(x, y) {
+    const d = this.td;
+    d.x = x;
+    d.y = y;
+    d.drop = dropAt(d.rects, props().pane, x, y);
+    if (d.drop) d.last = d.drop.rect;
+  }
+
+  beginTabDrag(cx) {
+    const d = this.td;
+    const p = props();
+    d.dragging = true;
+    d.rects = paneRects(p.tab, d.bottom || 100000);
+    setShared(PANE_DRAG, { pane: p.pane, tab: p.tab, at: Date.now() });
+    // One frame later, so the floating tab fades in rather than popping.
+    cx.timer.after(16, (cx) => {
+      d.shown = true;
+      cx.notify();
+    });
+  }
+
+  // Ends the drag: the floating tab and preview fade, the move runs, then the
+  // window goes. Without a drop (or on Esc) nothing moves.
+  finishTabDrag(cx, drop) {
+    const d = this.td;
+    if (d.busy) return;
+    d.busy = true;
+    d.shown = false;
+    d.drop = null;
+    cx.notify();
+    const p = props();
+    const tol = 4 * (settings()?.zoom ?? 1);
+    cx.spawn(async (cx) => {
+      let ok = true;
+      if (drop) {
+        try {
+          ok = await applyDrop(cx, p.pane, drop, d.rects, tol);
+        } catch {
+          ok = false;
+        }
+      }
+      if (!ok) notify({ title: "Couldn't move the pane.", body: "Its terminal keeps running. Try the tab's Move menu instead.", level: "warning" });
+      cx.timer.after(durationMs("fast"), () => this.closeGrab());
+    });
+  }
+
+  renderTabDrag() {
+    const t = theme();
+    const p = props();
+    const d = this.td;
+    const z = settings()?.zoom ?? 1;
+    const box = p.box;
+    const inside = (pt) => pt.x >= box.x && pt.x < box.x + box.w && pt.y >= box.y && pt.y < box.y + box.h;
+
+    // The handle: on the tab until pressed, then the whole window.
+    const handle = div()
+      .id("hmux-grab-handle")
+      .absolute()
+      .left(d.pressed ? 0 : box.x / z)
+      .top(d.pressed ? 0 : box.y / z)
+      .w(d.pressed ? 100000 : box.w / z)
+      .h(d.pressed ? 100000 : box.h / z)
+      // An open hand over the tab, a closed one while it is held.
+      .map((el) => (d.pressed ? el.cursor_grabbing() : el.cursor_grab()))
+      .on_mouse_down("left", (e, cx) => {
+        cx.stop_propagation();
+        if (d.busy) return;
+        d.pressed = true;
+        d.start = { x: e.position.x, y: e.position.y };
+        d.grab = {
+          x: Math.min(Math.max((e.position.x - box.x) / z, 10), 90),
+          y: Math.min(Math.max((e.position.y - box.y) / z, 6), 20),
+        };
+        d.x = e.position.x;
+        d.y = e.position.y;
+        this.handle.focus();
+        cx.notify();
+      })
+      .on_mouse_up("left", (e, cx) => {
+        cx.stop_propagation();
+        if (d.busy) return;
+        if (!d.dragging) {
+          // A plain click on the tab.
+          run("pane.focus", { pane: p.pane });
+          this.closeGrab();
+          return;
+        }
+        this.tabDragTrack(e.position.x, e.position.y);
+        this.finishTabDrag(cx, d.drop);
+      })
+      .on_mouse_down("right", (e, cx) => {
+        cx.stop_propagation();
+        this.closeGrab();
+        openMenu({ kind: "panetab", id: p.pane }, e.position);
+      });
+
+    let preview = null;
+    const r = d.dragging ? (d.drop?.rect ?? d.last) : null;
+    if (r) {
+      // The card keeps a little air inside the pane it covers.
+      const inset = 4;
+      const sp = spring("smooth");
+      preview = div()
+        .id("hmux-tabdrag-preview")
+        .absolute()
+        .left(r.x / z + inset)
+        .top(r.y / z + inset)
+        .w(Math.max(0, r.w / z - inset * 2))
+        .h(Math.max(0, r.h / z - inset * 2))
+        .rounded(8)
+        .bg(t.accent + "2e")
+        .border_1()
+        .border_color(t.accent + "b3")
+        .opacity(d.drop ? 1 : 0)
+        .transition("opacity", transition("fast", d.drop ? "out" : "in", { opacityOnly: true }));
+      if (sp) for (const prop of ["left", "top", "width", "height"]) preview = preview.spring(prop, sp);
+    }
+
+    const chip = !d.dragging ? null : h_flex()
+      .id("hmux-tabdrag-chip")
+      .absolute()
+      .left(d.x / z - d.grab.x)
+      .top(d.y / z - d.grab.y)
+      .h(26)
+      .px(10)
+      .gap(6)
+      .items_center()
+      .rounded(6)
+      .bg(t.background)
+      .border_1()
+      .border_color(t.border)
+      .shadow_lg()
+      .text_size(11)
+      .opacity(d.shown ? 1 : 0)
+      .transition("opacity", transition("fast", d.shown ? "out" : "in", { opacityOnly: true }))
+      .child(image(ICON.terminalMac).w(13).h(13).flex_none())
+      .child(div().flex_none().max_w(220).truncate().font_medium().text_color(t.foreground).child(p.name ?? "shell"))
+      .child(svg(ICON.close).size(9).flex_none().text_color(t.dim));
+
+    return div()
+      .id("hmux-tabdrag")
+      .size_full()
+      .relative()
+      .track_focus(this.handle)
+      .on_size_change((size) => {
+        d.bottom = size.height; // window px, like the pointer
+      })
+      .on_mouse_move((e, cx) => {
+        if (d.busy) return;
+        if (!d.pressed) {
+          // The pointer left the tab: the handle goes and the app is clickable again.
+          if (!inside(e.position)) this.closeGrab();
+          return;
+        }
+        if (!d.dragging) {
+          if (Math.hypot(e.position.x - d.start.x, e.position.y - d.start.y) < DRAG_START) return;
+          this.beginTabDrag(cx);
+        }
+        this.tabDragTrack(e.position.x, e.position.y);
+        cx.notify();
+      })
+      .on_key_down((e, cx) => {
+        if (e.key === "escape") this.finishTabDrag(cx, null);
+      })
+      .when(Boolean(preview), (el) => el.child(preview))
+      .child(handle)
+      .when(Boolean(chip), (el) => el.child(chip));
   }
 }

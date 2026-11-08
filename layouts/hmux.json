@@ -26,6 +26,7 @@
     "angle": 160
   },
   "preview": "layouts/hmux.svg",
+  "movable": false,
   "children": [
     {
       "id": "body",
