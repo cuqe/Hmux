@@ -333,16 +333,22 @@ export default class Hmux extends View {
           const command = String((await nextCommand()) ?? "");
           const m = /^selectMachine:(\d+)$/.exec(command);
           if (!m) continue;
-          const list = [];
-          for (const mm of machines().filter((x) => x.name)) {
-            for (const sp of spaces()) if (sp.machine === mm.name) for (const tb of sp.tabs) list.push({ space: sp, tab: tb });
-            const login = localTabs().find((e) => e.tab.name === `login ${mm.name}`);
-            if (login) list.push(login);
+          const n = Number(m[1]);
+          const cur = spaces().find((sp) => sp.active);
+          if (!cur) continue;
+          if (cur.machine) {
+            // An SSH session has the keyboard: pick from that machine's sessions.
+            const list = [];
+            for (const sp of spaces()) if (sp.machine === cur.machine) for (const tb of sp.tabs) list.push({ space: sp, tab: tb });
+            const pick = list[n - 1];
+            if (pick) {
+              if (!pick.space.active) run("space.select", { id: pick.space.id });
+              run("tab.select", { id: pick.tab.id });
+            }
+          } else {
+            // A normal session: the Nth tab of this space.
+            run("tab.select", { index: n });
           }
-          const pick = list[Number(m[1]) - 1];
-          if (!pick) continue;
-          if (!pick.space.active) run("space.select", { id: pick.space.id });
-          run("tab.select", { id: pick.tab.id });
           cx.notify();
         }
       });
@@ -910,6 +916,7 @@ export default class Hmux extends View {
       })
       // Released outside the sidebar: the next press anywhere cancels it.
       .on_mouse_down_out((_e, cx) => {
+        if (this.edit) this.commitEdit(cx);
         if (!this.drag) return;
         this.endDrag();
         cx.notify();
@@ -994,14 +1001,15 @@ export default class Hmux extends View {
       .id(`hmux-edit-${id}`)
       .flex_1()
       .min_w(0)
-      .h(18)
-      .px(4)
+      .h(22)
+      .px(6)
       .flex()
       .items_center()
-      .rounded(4)
-      .bg(t.background)
+      .rounded(5)
+      .bg(t.popover)
       .border_1()
       .border_color(t.accent)
+      .shadow_sm()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
       .on_key_down((e, cx) => {
@@ -1122,8 +1130,11 @@ export default class Hmux extends View {
       .border_1()
       .border_color(lifted ? t.accent : "#00000000")
       .when(lifted, (r) => r.bg(t.raised).shadow_md())
-      .on_mouse_down("left", (e) => {
-        if (this.edit) return;
+      .on_mouse_down("left", (e, cx) => {
+        if (this.edit) {
+          this.commitEdit(cx);
+          return;
+        }
         this.drag = { kind, id, scope: key, section: key, mode, siblings, start: e.position, active: false, dy: 0, target: siblings.indexOf(id) };
       })
       .on_mouse_up("left", (e, cx) => {
@@ -1632,12 +1643,6 @@ export default class Hmux extends View {
         if (!s.active) run("space.select", { id: s.id });
         run("tab.select", { id: tb.id });
       })
-      .on_mouse_up("left", (e, cx) => {
-        if (e.click_count >= 2) {
-          cx.stop_propagation();
-          this.startEdit("tab", tb.id, cx);
-        }
-      })
       .child(image(ICON.terminalMac).w(12).h(12).flex_none())
       .child(
         v_flex()
@@ -1645,7 +1650,16 @@ export default class Hmux extends View {
           .min_w(0)
           .gap(2)
           .when(Boolean(editing), (el) => el.child(editing))
-          .when(!editing, (el) => el.child(div().truncate().text_size(11).font_medium().text_color(fg).child(title)))
+          .when(!editing, (el) =>
+            el.child(
+              div().truncate().text_size(11).font_medium().text_color(fg).child(title)
+                .on_mouse_up("left", (e, cx) => {
+                  if (e.click_count >= 2) {
+                    cx.stop_propagation();
+                    this.startEdit("tab", tb.id, cx);
+                  }
+                }),
+            ))
           .child(
             h_flex().gap(6).items_center().min_w(0)
               .child(div().flex_1().min_w(0).truncate().text_size(9.5).text_color(sub).opacity(here ? 0.8 : 1).child(cwd))

@@ -60,9 +60,11 @@ session menu uses Finder and `pbcopy`).
   New space and Forget machine. Sessions under a machine use the same two-line
   design as the list (name, folder and time; accent-filled when active, hover ×
   to close). An unnamed tab shows its **current path** (so new spaces never all
-  read `Command 1`); double-click to rename it — a set name stays put when the
-  path changes, and clearing it brings the path back. The list scrolls, and
-  `Cmd-1`…`Cmd-9` jump to the Nth machine session.
+  read `Command 1`); double-click its title to rename it — a set name stays put
+  when the path changes, clearing it brings the path back, and clicking
+  anywhere else saves. The list scrolls, and `Cmd-1`…`Cmd-9` follow the focus:
+  on a normal session they pick the Nth tab of that space, on an SSH session
+  the Nth session of that machine.
 - **Panes:** a 20px header with the program, folder, branch and status; on
   hover, split right/down, zoom and close.
 - **Right-click a session:** go to it, rename, reset the name, split right or
