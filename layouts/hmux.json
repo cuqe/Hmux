@@ -47,7 +47,7 @@
       "type": "row",
       "divider": {
         "width": 1,
-        "color": "edge"
+        "color": "border"
       },
       "children": [
         {
@@ -114,6 +114,5 @@
         }
       ]
     }
-  ],
-  "movable": false
+  ]
 }

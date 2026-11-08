@@ -27,8 +27,6 @@ const GROUPS_KEY = "hmux.groups"; // [{ id, name }]
 const ASSIGN_KEY = "hmux.groupOf"; // { [tabId]: groupId }
 const ORDER_KEY = "hmux.order"; // { u: [tabId…], <groupId>: [tabId…] }
 const UNGROUPED = "u";
-const PANE_DRAG = "hmux.paneDrag"; // { pane, ov } while a pane tab is dragged
-const PANE_DROP = "hmux.paneDrop"; // { pane } under the pointer during that drag
 const SIDEBAR_W = "hmux.sidebarW"; // the sidebar's live width (measured, layout px)
 const INBOX_MAX = 60;
 const INBOX_W = 320;
@@ -212,16 +210,18 @@ function sessionFolder(e) {
 // "login <machine>" belongs to that machine instead (it runs on this computer).
 const LOGIN_TAB = /^login (.+)$/;
 const autoKey = (e) => {
+  // Everything on one machine — its sessions and the login that opens it —
+  // lives together under the machine's name.
   const login = LOGIN_TAB.exec(e.tab.name ?? "");
-  if (login) return `login:${login[1]}`;
+  if (login) return `machine:${login[1]}`;
+  if (e.space.machine) return `machine:${e.space.machine}`;
   const cwd = sessionFolder(e);
-  return cwd ? `${e.space.machine ?? ""}|${cwd}` : "";
+  return cwd ? `|${cwd}` : "";
 };
 
-// Sessions on the same machine working in the same folder form an automatic
-// group (two or more of them). Membership follows the folder: when a session
-// moves, it leaves and joins on its own. A manual group always wins. A login
-// tab is always grouped, under its machine.
+// Local sessions on the same folder form an automatic group (two or more). A
+// machine's sessions always form one, named after the machine. Membership
+// follows the folder/machine; a manual group always wins.
 function autoGroups() {
   const gof = groupOf();
   const buckets = new Map();
@@ -230,20 +230,14 @@ function autoGroups() {
     const key = autoKey(e);
     if (!key) continue;
     if (!buckets.has(key)) {
-      const login = key.startsWith("login:") ? key.slice(6) : null;
-      buckets.set(key, {
-        key,
-        login,
-        cwd: login ? "" : sessionFolder(e),
-        machine: login ?? (e.space.machine ?? ""),
-        entries: [],
-      });
+      const machine = key.startsWith("machine:") ? key.slice(8) : null;
+      buckets.set(key, { key, machine, cwd: machine ? "" : sessionFolder(e), entries: [] });
     }
     buckets.get(key).entries.push(e);
   }
   return [...buckets.values()]
-    .filter((b) => b.login || b.entries.length > 1)
-    .sort((a, b) => (a.login ? 1 : 0) - (b.login ? 1 : 0) || a.cwd.localeCompare(b.cwd));
+    .filter((b) => b.machine || b.entries.length > 1)
+    .sort((a, b) => (a.machine ? 1 : 0) - (b.machine ? 1 : 0) || String(a.machine ?? a.cwd).localeCompare(String(b.machine ?? b.cwd)));
 }
 
 // The sessions of one manual section (a group id or UNGROUPED), in the user's order.
@@ -337,7 +331,6 @@ export default class Hmux extends View {
   render(cx) {
     const role = props()?.role ?? "sidebar";
     if (role === "top") return this.renderTop();
-    if (role === "tabdrag") return this.renderTabDrag();
     if (role === "fade") return this.renderFade();
     if (role === "pane") return this.renderPane();
     if (role === "inbox") return this.renderInbox();
@@ -428,7 +421,7 @@ export default class Hmux extends View {
       frame: "none",
       width: INBOX_W,
       height: INBOX_H + 8,
-      at: at ? { x: at.x - 12, y: at.y + 14 } : "pointer",
+      at: at ? { x: at.x - 26, y: at.y + 14 } : "pointer",
     });
   }
 
@@ -638,8 +631,8 @@ export default class Hmux extends View {
             .child(div().text_size(11).child("When an agent finishes or needs you, it shows up here.")),
       )
       )
-      .child(div().absolute().top(0).left(16).child(svg(ICON.tail).w(24).h(9).flex_none().text_color(t.popover)))
-      .child(div().absolute().top(0).left(16).child(svg(ICON.tailOutline).w(24).h(9).flex_none().text_color(t.border)));
+      .child(div().absolute().top(0).left(14).child(svg(ICON.tail).w(24).h(9).flex_none().text_color(t.popover)))
+      .child(div().absolute().top(0).left(14).child(svg(ICON.tailOutline).w(24).h(9).flex_none().text_color(t.border)));
   }
 
   // ── right-click menus ──────────────────────────────────────────────────────
@@ -686,7 +679,7 @@ export default class Hmux extends View {
       }
       items.push([`New space on ${m.name}`, () => run("space.new", { machine: m.name })]);
       items.push(null);
-      items.push(["Disconnect", () => askToClose(`Disconnect from ${m.name}?`, "Herdr forgets this machine. Its terminals keep running there.", "Disconnect", { exec: ["hc", ["machine", "rm", m.name]] }), true]);
+      items.push(["Forget machine", () => askToClose(`Forget ${m.name}?`, "Herdr forgets this machine. Its terminals keep running there.", "Forget machine", { exec: ["hc", ["machine", "rm", m.name]] }), true]);
       return items;
     }
     if (p.kind === "tab") {
@@ -839,7 +832,7 @@ export default class Hmux extends View {
       .size_full()
       .on_size_change((size) => {
         // The title bar's divider follows the sidebar's live width.
-        const w = Math.round(size.width / (settings()?.zoom ?? 1));
+        const w = Math.round(size.width);
         if (w > 0 && Math.abs(w - Number(shared(SIDEBAR_W) ?? 0)) >= 1) setShared(SIDEBAR_W, w);
       })
       .text_size(12)
@@ -1244,7 +1237,7 @@ export default class Hmux extends View {
     const key = `a:${a.key}`;
     const open = this.expanded.has(key);
     const entries = autoSessions(a.key);
-    const label = a.login ? `${a.login} · login` : `${shortPath(a.cwd)}${a.machine ? ` · ${a.machine}` : ""}`;
+    const label = a.machine ? a.machine : shortPath(a.cwd);
     const head = h_flex()
       .id(`hmux-auto-${a.key}`)
       .mx(4)
@@ -1263,7 +1256,7 @@ export default class Hmux extends View {
         cx.notify();
       })
       .child(svg(open ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim))
-      .child(a.login ? svg(ICON.server).size(11).flex_none().text_color(t.dim) : image(ICON.folderMac).w(12).h(12).flex_none())
+      .child(a.machine ? svg(ICON.server).size(11).flex_none().text_color(t.dim) : image(ICON.folderMac).w(12).h(12).flex_none())
       .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(label))
       .when(!open, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(`${entries.length}`)));
     return v_flex().child(head).when(open, (el) => el.child(this.rowsBlock(t, key)));
@@ -1552,23 +1545,6 @@ export default class Hmux extends View {
       .child(this.machinesBlock(t));
   }
 
-  // The floating tab that follows the pointer while a pane tab is dragged.
-  renderTabDrag() {
-    const t = theme();
-    return h_flex()
-      .size_full()
-      .px(10)
-      .gap(6)
-      .items_center()
-      .rounded(7)
-      .bg(t.popover)
-      .border_1()
-      .border_color(t.border)
-      .shadow_lg()
-      .child(svg(ICON.terminal).size(12).flex_none().text_color(t.foreground))
-      .child(div().truncate().text_size(12).font_medium().text_color(t.foreground).child(props()?.name ?? "terminal"));
-  }
-
   // ── pane header: one cmux-style tab ────────────────────────────────────────  // Terminal glyph, title, ×, then the pane tools; the focused pane is the page
   // color with a 2px accent line along its top.
   renderPane() {
@@ -1577,12 +1553,6 @@ export default class Hmux extends View {
     if (!p) return div();
     const pane = p.pane;
     const name = ((p.program?.agent || p.program?.shell) && p.program.name) || clean(p.title) || p.program?.name || "shell";
-    const drag = shared(PANE_DRAG);
-    const dragging = drag?.pane === pane;
-    const drop = shared(PANE_DROP);
-    const dropHere = Boolean(drop?.pane === pane && drag && drag.pane !== pane);
-    const list = panes().map((x) => x.pane);
-    const dropBefore = dropHere && list.indexOf(drag.pane) > list.indexOf(pane);
     const close = div()
       .id(`hmux-pane-x-${pane}`)
       .flex_none()
@@ -1606,59 +1576,6 @@ export default class Hmux extends View {
       .border_b(1)
       .border_color(t.border)
       .text_size(11)
-      // Drag by the tab itself: a floating tab follows the pointer and the tab
-      // under it shows where the drop will land. Releasing moves it beside.
-      .when(dragging, (el) => el.bg(t.hover).shadow_md())
-      .when(dropHere, (el) => (dropBefore ? el.border_l(2).border_color(t.accent) : el.border_r(2).border_color(t.accent)))
-      .on_mouse_down("left", (e, cx) => {
-        cx.stop_propagation();
-        const prev = shared(PANE_DRAG);
-        if (prev?.ov) closeOverlay(prev.ov); // a drag that ended outside the tabs
-        this.tabDrag = { x: e.position.x, y: e.position.y, active: false };
-        setShared(PANE_DRAG, { pane, ov: null });
-      })
-      .on_mouse_move((e, cx) => {
-        const d = this.tabDrag;
-        if (!d) return;
-        const dx = e.position.x - d.x;
-        const dy = e.position.y - d.y;
-        if (!d.active && Math.hypot(dx, dy) < 4) return;
-        d.active = true;
-        const ov = openOverlay({
-          mod: "hmux",
-          props: { role: "tabdrag", name },
-          kind: "window",
-          key: "hmux-tabdrag",
-          frame: "none",
-          width: 190,
-          height: 30,
-          at: { x: e.position.x + 14, y: e.position.y + 10 },
-        });
-        setShared(PANE_DRAG, { pane, ov });
-        cx.notify();
-      })
-      .on_hover((hovered, cx) => {
-        if (!shared(PANE_DRAG)) return;
-        const cur = shared(PANE_DROP)?.pane;
-        if (hovered && cur !== pane) setShared(PANE_DROP, { pane });
-        else if (!hovered && cur === pane) setShared(PANE_DROP, null);
-      })
-      .on_mouse_up("left", (_e, cx) => {
-        this.tabDrag = null;
-        const src = shared(PANE_DRAG);
-        const target = shared(PANE_DROP)?.pane;
-        setShared(PANE_DRAG, null);
-        setShared(PANE_DROP, null);
-        if (src?.ov) closeOverlay(src.ov);
-        if (!src || !target || src.pane === target) return;
-        cx.stop_propagation();
-        const order = panes().map((x) => x.pane);
-        const from = order.indexOf(src.pane);
-        const to = order.indexOf(target);
-        if (from < 0 || to < 0 || from === to) return;
-        run("pane.focus", { pane: src.pane });
-        run("pane.swap", { direction: to < from ? "left" : "right" });
-      })
       .on_mouse_down("right", (e, cx) => {
         cx.stop_propagation();
         openMenu({ kind: "panetab", id: pane }, e.position);

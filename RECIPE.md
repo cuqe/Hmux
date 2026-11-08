@@ -63,10 +63,10 @@ the Session footer, which stays pinned at the bottom.
   or more sessions on the same machine work in the same folder, and fold like
   any other group. (A manual group's name is 12px semibold `muted`; the path
   here is lighter, which is the tell.)
-- **Login groups.** A tab named `login <machine>` (opened by clicking an
-  offline machine) is always grouped — never by its `~` folder — under
-  `<machine> · login` with a server icon, and it stays there after the login
-  succeeds.
+- **Machine groups.** Every session on an SSH machine — including the
+  `login <machine>` tab that opened it — groups under the machine's name with a
+  server icon, always shown (even with one session), so a new remote terminal
+  never falls into `UNGROUPED`. Local sessions keep their folder groups.
 - **The `UNGROUPED` rule** — a 9.5px semibold `dim` label followed by a 1px
   `border` line, shown only when some groups exist above; the sessions under it
   are in no group.
@@ -91,26 +91,20 @@ the Session footer, which stays pinned at the bottom.
   session running `hc machine login <name>` so its password or code can be
   typable there; clicking a connected one selects its first space (or makes one
   when it has none). Right-click a machine for Connect/Open, `New space on
-  <name>` (`space.new {machine}`) and Disconnect (`hc machine rm <name>` via the
-  confirm dialog's exec form; it forgets the machine, whose terminals keep
-  running). Their sessions are in the Sessions list.
+  <name>` (`space.new {machine}`) and `Forget machine` (`hc machine rm <name>`
+  through the confirm dialog's exec form — Herdr has no offline toggle, so this
+  forgets the machine while its terminals keep running). Their sessions are in
+  the Sessions list under the machine's name.
 
 **Pane tabs — 30px, one bar per pane.** The terminal glyph (`>_`), the title,
 a close ×, then split-right, split-down and zoom. The focused pane is the page
 color with a 2px accent line along its top; the others sit on `chrome`. The
 session's folder is in the title bar, like cmux.
 
-**Moving a pane.** The layout root sets `"movable": false`, so the app's centre
-grip no longer drags panes. Instead, press a pane's tab (anywhere but its
-buttons): once the pointer travels 4px, a **floating copy of the tab** (the
-`tabdrag` role in a borderless, shadowed window, key `hmux-tabdrag`) follows the
-pointer just beside it, and the tab under the pointer shows a 2px accent line on
-the side where the drop will land (`hmux.paneDrop`). Releasing over another tab
-closes the floating copy and calls `pane.focus` on the dragged pane, then
-`pane.swap` left or right (by tab order) — it lands beside the tab it was
-dropped on. Right-click a tab for Focus, Move left/right/up/down
-(`pane.focus` + `pane.swap`) and Close pane. A drag left hanging is cleared by
-the next press.
+**Moving a pane.** Panes drag with the app's native grip on a pane's top edge
+(the smooth accent overlay comes from the app itself), and the layout keeps
+`movable` at its default. For a click-only path, right-click a pane tab for
+Focus, Move left/right/up/down (`pane.focus` + `pane.swap`) and Close pane.
 
 **Panes.** A 1px gap between panes, square corners, the `background` theme
 color; the focused pane gets a 1px `focusring` border. Each pane carries its
@@ -235,18 +229,18 @@ Reduce Motion. Elapsed labels refresh every 30s; nothing else polls.
     header {content: {mod: "hmux", props: {role: "pane"}}, height: 30,
     position: "top", reveal: "always"}}}`.
 
-**`mods/hmux`** — one View class with eight roles read from
-`props().role`: `top`, `tabdrag`, `sidebar` (default), `pane`, `inbox`, `menu`,
-`confirm`, `fade`. It imports `View, div, svg, image` from `gpui-kit`, `v_flex, h_flex,
+**`mods/hmux`** — one View class with seven roles read from
+`props().role`: `top`, `sidebar` (default), `pane`, `inbox`, `menu`, `confirm`,
+`fade`. It imports `View, div, svg, image` from `gpui-kit`, `v_flex, h_flex,
 InputState, Input` from `gpui-base`, and from `herdr`: `agents, spaces, panes,
 focused, machines, terminals, props, run, theme, settings, appHome,
 readTextFile, writeTextFile, notify, shared, setShared, openOverlay,
 closeOverlay, exec`. `motion.js` holds the tokens and the Reduce Motion read.
 
 State: `hmux.groups` (`[{id, name}]`), `hmux.groupOf` (`{tabId: groupId}`),
-`hmux.order` (`{u: [tabId…], <groupId>: [tabId…]}`), `hmux.paneDrag` (`{pane, ov}`),
-`hmux.paneDrop` (`{pane}`), `hmux.sidebarW` (the sidebar's measured width),
-`hmux.inbox`, `hmux.inboxSeen`, `hmux.rename` (shared) and `expanded` (localStorage: which groups, spaces and
+`hmux.order` (`{u: [tabId…], <groupId>: [tabId…]}`), `hmux.sidebarW` (the
+sidebar's measured width), `hmux.inbox`, `hmux.inboxSeen`, `hmux.rename`
+(shared) and `expanded` (localStorage: which groups, spaces and
 machines are folded). Constants: `ROW = 22` (header rows), `SESSION_H = 58`
 (session rows), `DRAG_START = 4`, inbox 320×380 (header 44), menu 200×300,
 confirm 360×170.
@@ -327,17 +321,18 @@ blocked `#ff9f0a`, done `#30d158`, glass `#1e1e23`, edge `#ffffff14`, wash
   focus the agent, it only drops the entry.
 - **The folder icon** in the title bar is Apple's system artwork
   (`folder-macos.png`); see THIRD_PARTY_NOTICES.md.
-- **The title-bar divider tracks the sidebar's live width.** The layout file's
-  232px is only the fallback; the sidebar writes its measured width (divided by
-  zoom) to `hmux.sidebarW` on every size change, so the divider moves with a
-  drag and reads as the same line as the sidebar's border.
+- **The title-bar divider is one line with the sidebar's border.** The sidebar
+  writes its measured width to `hmux.sidebarW` on every size change (unzoomed
+  layout px), so the title-bar divider and the body's sidebar border share the
+  same x and color (`border`).
 - **Move beside uses tab order.** A drop calls `pane.swap` left/right by the
   tabs' order, which is exact for side-by-side splits; for a stacked split use
   the tab's right-click Move up/down. `pane.swap` is geometric, so a very
   unusual tree may land differently.
-- **Disconnect forgets the machine** (`hc machine rm`): its terminals keep
-  running there, but Herdr no longer lists it; Connect again from Settings →
-  Machines.
+- **Forget, not disconnect.** Herdr exposes no offline toggle for a machine:
+  `hc machine` has add/ls/login/update/rename/rm only. The menu's Forget runs
+  `hc machine rm` (the remote terminals keep running); re-add the host from
+  Settings → Machines.
 - **The fade overlay** is a separate window over everything: a layout switch
   closes it (theme already flipped — safe), and `settings().zoom` must exist; at
   zoom 1 with a missing `window.json` it assumes 3:2. The snapshot lives in
@@ -377,8 +372,8 @@ blocked `#ff9f0a`, done `#30d158`, glass `#1e1e23`, edge `#ffffff14`, wash
 9. The title bar shows a full-height divider, then the macOS folder icon at the
    sidebar's edge and the focused session's path; each pane carries one
    cmux-style tab (terminal glyph, title, ×, tools; the focused one white with
-   a 2px accent top) — no second header row. Dragging a tab onto another moves
-   it beside (right-click also offers Move left/right/up/down).
+   a 2px accent top) — no second header row. Panes drag with the native top-edge
+   grip; right-click a tab for Move left/right/up/down.
 10. A machine row shows Connected/Offline; clicking an offline one opens a
     login session with the `hc machine login` prompt; clicking a connected one
     selects its first space or makes one. Right-click offers Connect/Open, New
@@ -390,7 +385,8 @@ blocked `#ff9f0a`, done `#30d158`, glass `#1e1e23`, edge `#ffffff14`, wash
     bell with a clean 1px outline and each row's agent logo at the left;
     hovering a row shows its × circle (centered) and the time stays put; that ×
     removes just that row; `Clear all` empties the list; clicking a live entry
-    focuses that agent. A `login <machine>` tab sits under `<machine> · login`.
+    focuses that agent. Every session of an SSH machine, its login included, sits under the
+    machine's name.
 13. Splitting a pane adds a header and hover shows the four tools; they split,
     zoom and close.
 14. `herdr-app shot` shows the traffic lights inside the 78px inset, no gaps
