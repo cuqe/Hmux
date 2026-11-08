@@ -7,7 +7,24 @@ folder below — and the active one fills with the accent color. The whole windo
 follows a light and a dark theme, switched from the title bar with a crossfade
 instead of a hard cut.
 
-![Hmux](preview.png)
+<p align="center">
+  <img src="preview.png" alt="Hmux in its light theme: the agents and sessions sidebar beside a Claude Code pane and two shell panes" width="900">
+</p>
+
+<p align="center">
+  <img src="docs/dark.png" alt="Hmux in its dark theme, the same panes after a drag swapped them" width="900">
+  <br><sub>The same window in <code>hmux-black</code>: press the sun/moon button and it crossfades.</sub>
+</p>
+
+### Drag a pane tab
+
+Grab a pane's tab and drop it on another pane: the middle swaps the two, an
+edge puts it beside that pane in that half. A floating copy of the tab follows
+the pointer, and an accent card springs to where the pane will land.
+
+<p align="center">
+  <img src="docs/pane-drag.gif" alt="Dragging the Claude Code tab across the panes: an accent preview follows the pointer and the panes swap on release" width="900">
+</p>
 
 Built for macOS (the title bar leaves room for the traffic lights and the
 session menu uses Finder and `pbcopy`).
@@ -49,8 +66,11 @@ session menu uses Finder and `pbcopy`).
     and Delete (deleting a group keeps its sessions, ungrouped).
 - **Pane tabs:** each pane carries its own cmux-style tab bar — the macOS
   Terminal icon, title, ×, then split and zoom tools; the focused tab is white
-  with a thin accent line on top. Drag panes with the native grip on a pane's
-  top edge; right-click a tab for Move left/right/up/down and Close.
+  with a thin accent line on top. **Drag a tab** (its icon or title) and a
+  floating copy follows the pointer while a translucent accent card springs to
+  where it will land: the middle of another pane swaps the two, an edge puts
+  it beside that pane in that half. Esc cancels. Right-click a tab for Move
+  left/right/up/down and Close.
 - **Session footer:** status counts, the focused pane's folder and branch, and
   `This Mac + N` — each SSH machine with its connection state. Open a machine
   to see **its sessions right under it** (the login tab too); click one to
