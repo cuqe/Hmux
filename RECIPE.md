@@ -20,9 +20,10 @@ buttons sit in it. Buttons are 12px icons with 4px padding in 5px rounded
 corners, drawn in `dim` and turning `foreground` + `hover` background on hover,
 one slightly lighter background when active.
 
-- Sidebar toggle (`layout.toggle`), leftmost, active while the sidebar shows.
-- Bell with a count badge: a 13px accent circle, 8.5px semibold
-  `accent_foreground` text, showing up to `9+`.
+The strip above the sidebar (`sidetop`) holds the sidebar toggle
+(`layout.toggle`) and the bell with its count badge (a 13px accent circle,
+8.5px semibold `accent_foreground`, up to `9+`) — cmux's top-left, with the
+traffic lights over it. With the sidebar hidden the title bar carries both.
 - The session's folder: the macOS folder icon at 14px and the focused pane's
   working path (`~/…`, 11.5px `muted`, capped 300px), then empty space. The
   title bar lives in the work column, so it starts exactly at the body's
@@ -90,11 +91,13 @@ Local sessions keep their folder groups.
   (working), Offline (idle). Clicking an offline machine opens a `login <name>`
   session running `hc machine login <name>` so its password or code can be
   typable there; clicking a connected one selects its first space (or makes one
-  when it has none). Right-click a machine for Connect/Open, `New space on
-  <name>` (`space.new {machine}`) and `Forget machine` (`hc machine rm <name>`
-  through the confirm dialog's exec form — Herdr has no offline toggle, so this
-  forgets the machine while its terminals keep running). Their sessions are in
-  the Sessions list under the machine's name.
+  when it has none). Open a machine to list **its sessions under it** (each
+  22px row: title, path, status; click to `space.select` + `tab.select`, plus
+  the `login <machine>` tab), with a `Connect…` row when offline. Right-click a
+  machine for Connect/Open, `New space on <name>` (`space.new {machine}`) and
+  `Forget machine` (`hc machine rm <name>` through the confirm dialog's exec
+  form — Herdr has no offline toggle, so this forgets the machine while its
+  terminals keep running).
 
 **Pane tabs — 30px, one bar per pane.** The macOS Terminal icon, the title,
 a close ×, then split-right, split-down and zoom. The focused pane is the page
@@ -221,8 +224,8 @@ Reduce Motion. Elapsed labels refresh every 30s; nothing else polls.
 - `body` — `row`, 1px `border` divider, two children:
   - `sidebar` — `column`, 232px, min 180, max 380, background `glass`:
     - `sidebar-top` — `block`, 32px, `window_drag: true`, background `glass`,
-      `content {mod: "hmux", props: {role: "spacer"}}` (empty; the traffic
-      lights sit over it).
+      `content {mod: "hmux", props: {role: "sidetop"}}` (the toggle and bell;
+      the traffic lights sit over it).
     - `sidebar-body` — `block`, `{mod: "hmux", props: {role: "sidebar"}}`.
   - `work` — `column`, `resizable: false`:
     - `titlebar` — `block`, 32px, `window_drag: true`, background `glass`,
@@ -236,9 +239,9 @@ Reduce Motion. Elapsed labels refresh every 30s; nothing else polls.
 The body row's divider is the single vertical line: the title bar lives inside
 the work column, so nothing else draws a line.
 
-**`mods/hmux`** — one View class with eight roles read from
-`props().role`: `top`, `spacer`, `sidebar` (default), `pane`, `inbox`, `menu`,
-`confirm`, `fade`. It imports `View, div, svg, image` from `gpui-kit`, `v_flex, h_flex,
+**`mods/hmux`** — one View class with nine roles read from
+`props().role`: `top`, `sidetop`, `spacer`, `sidebar` (default), `pane`,
+`inbox`, `menu`, `confirm`, `fade`. It imports `View, div, svg, image` from `gpui-kit`, `v_flex, h_flex,
 InputState, Input` from `gpui-base`, and from `herdr`: `agents, spaces, panes,
 focused, machines, terminals, props, run, theme, settings, appHome,
 readTextFile, writeTextFile, notify, shared, setShared, openOverlay,

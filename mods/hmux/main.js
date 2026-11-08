@@ -192,11 +192,27 @@ const orderOf = () => {
 const setGroups = (list) => setShared(GROUPS_KEY, list);
 const setOrder = (section, ids) => setShared(ORDER_KEY, { ...orderOf(), [section]: ids });
 
-// Every session (tab) on every machine, in Herdr's own order, before grouping.
+// This computer's sessions (tabs), before grouping. A machine's sessions and
+// its login tab live under the machine in the session footer instead.
 function allSessions() {
   const out = [];
   for (const s of spaces()) {
-    for (const tb of s.tabs) if (!tb.settled || tb.active) out.push({ space: s, tab: tb });
+    if (s.machine) continue;
+    for (const tb of s.tabs) {
+      if (tb.settled && !tb.active) continue;
+      if (LOGIN_TAB.test(tb.name ?? "")) continue;
+      out.push({ space: s, tab: tb });
+    }
+  }
+  return out;
+}
+
+// Every tab on this computer, machine logins included.
+function localTabs() {
+  const out = [];
+  for (const s of spaces()) {
+    if (s.machine) continue;
+    for (const tb of s.tabs) out.push({ space: s, tab: tb });
   }
   return out;
 }
@@ -211,18 +227,12 @@ function sessionFolder(e) {
 // "login <machine>" belongs to that machine instead (it runs on this computer).
 const LOGIN_TAB = /^login (.+)$/;
 const autoKey = (e) => {
-  // Everything on one machine — its sessions and the login that opens it —
-  // lives together under the machine's name.
-  const login = LOGIN_TAB.exec(e.tab.name ?? "");
-  if (login) return `machine:${login[1]}`;
-  if (e.space.machine) return `machine:${e.space.machine}`;
   const cwd = sessionFolder(e);
-  return cwd ? `|${cwd}` : "";
+  return cwd ? cwd : "";
 };
 
-// Local sessions on the same folder form an automatic group (two or more). A
-// machine's sessions always form one, named after the machine. Membership
-// follows the folder/machine; a manual group always wins.
+// Sessions on the same folder form an automatic group (two or more). A manual
+// group always wins.
 function autoGroups() {
   const gof = groupOf();
   const buckets = new Map();
@@ -230,15 +240,10 @@ function autoGroups() {
     if (gof[e.tab.id]) continue;
     const key = autoKey(e);
     if (!key) continue;
-    if (!buckets.has(key)) {
-      const machine = key.startsWith("machine:") ? key.slice(8) : null;
-      buckets.set(key, { key, machine, cwd: machine ? "" : sessionFolder(e), entries: [] });
-    }
+    if (!buckets.has(key)) buckets.set(key, { key, cwd: sessionFolder(e), entries: [] });
     buckets.get(key).entries.push(e);
   }
-  return [...buckets.values()]
-    .filter((b) => b.machine || b.entries.length > 1)
-    .sort((a, b) => (a.machine ? 1 : 0) - (b.machine ? 1 : 0) || String(a.machine ?? a.cwd).localeCompare(String(b.machine ?? b.cwd)));
+  return [...buckets.values()].filter((b) => b.entries.length > 1).sort((a, b) => a.cwd.localeCompare(b.cwd));
 }
 
 // The sessions of one manual section (a group id or UNGROUPED), in the user's order.
@@ -331,6 +336,7 @@ export default class Hmux extends View {
 
   render(cx) {
     const role = props()?.role ?? "sidebar";
+    if (role === "sidetop") return this.renderSideTop();
     if (role === "spacer") return div();
     if (role === "top") return this.renderTop();
     if (role === "fade") return this.renderFade();
@@ -342,18 +348,11 @@ export default class Hmux extends View {
   }
 
   // ── title bar ──────────────────────────────────────────────────────────────
-  renderTop() {
-    const t = theme();
-    this.trackInbox();
-    const sidebarHidden = Boolean(findNode(layout(), "sidebar")?.hidden);
+  // The bell with its unread badge (used in the sidebar top strip and, with the
+  // sidebar hidden, in the title bar).
+  inboxBell(t) {
     const count = unread();
-    const space = spaces().find((s) => s.active);
-    const tab = space?.tabs.find((tb) => tb.active);
-    const f = focused();
-    const pane = f?.pane ? panes().find((x) => x.pane === f.pane) : null;
-    const cwd = shortPath(pane?.cwd ?? f?.cwd ?? space?.folder ?? "");
-    const where = space ? `${space.name}${tab ? ` · ${this.tabLabel(tab)}` : ""}` : "";
-    const bell = div()
+    return div()
       .relative()
       .flex_none()
       .child(iconButton(t, "hmux-top-bell", ICON.bell, (at) => this.openInbox(at), 13))
@@ -365,6 +364,35 @@ export default class Hmux extends View {
             .child(count > 9 ? "9+" : String(count)),
         ),
       );
+  }
+
+  // The strip above the sidebar (over the traffic lights), like cmux: toggle, bell.
+  renderSideTop() {
+    const t = theme();
+    const hidden = Boolean(findNode(layout(), "sidebar")?.hidden);
+    return h_flex()
+      .id("hmux-sidetop")
+      .size_full()
+      .pl(78)
+      .pr(8)
+      .gap(2)
+      .items_center()
+      .child(iconButton(t, "hmux-top-sidebar", ICON.sidebar, () => run("layout.toggle", { id: "sidebar" }), 13, { active: !hidden }))
+      .child(this.inboxBell(t));
+  }
+
+  renderTop() {
+    const t = theme();
+    this.trackInbox();
+    const sidebarHidden = Boolean(findNode(layout(), "sidebar")?.hidden);
+    const count = unread();
+    const space = spaces().find((s) => s.active);
+    const tab = space?.tabs.find((tb) => tb.active);
+    const f = focused();
+    const pane = f?.pane ? panes().find((x) => x.pane === f.pane) : null;
+    const cwd = shortPath(pane?.cwd ?? f?.cwd ?? space?.folder ?? "");
+    const where = space ? `${space.name}${tab ? ` · ${this.tabLabel(tab)}` : ""}` : "";
+    const bell = this.inboxBell(t);
     const sideNode = findNode(layout(), "sidebar");
     const measured = Number(shared(SIDEBAR_W) ?? 0);
     const sideW = measured > 0 ? measured : (sideNode?.size?.px ?? 232);
@@ -382,9 +410,11 @@ export default class Hmux extends View {
       .gap(2)
       .items_center()
       .text_size(11.5)
-      .child(iconButton(t, "hmux-top-sidebar", ICON.sidebar, () => run("layout.toggle", { id: "sidebar" }), 13, { active: !sidebarHidden }))
-      .child(bell)
-      .child(div().flex_none().w(6))
+      .when(sidebarHidden, (el) =>
+        el.child(iconButton(t, "hmux-top-sidebar", ICON.sidebar, () => run("layout.toggle", { id: "sidebar" }), 13, { active: false }))
+          .child(bell)
+          .child(div().flex_none().w(6)),
+      )
       // The session's folder, like cmux: the macOS folder icon and its path.
       .child(image(ICON.folderMac).w(14).h(14).flex_none())
       .child(div().flex_none().max_w(300).truncate().px(6).text_color(t.muted).child(cwd))
@@ -1210,8 +1240,6 @@ export default class Hmux extends View {
     const addGroup = iconButton(t, "hmux-group-new", ICON.folderPlus, () => this.createGroup(), 11);
     const addSession = iconButton(t, "hmux-session-new", ICON.plus, () => run("tab.new", {}), 11);
     const auto = autoGroups();
-    const localAuto = auto.filter((a) => !a.machine);
-    const machineAuto = auto.filter((a) => a.machine);
     const loose = sessionsIn(UNGROUPED);
     const separated = (groups().length > 0 || auto.length > 0) && loose.length > 0;
     return v_flex()
@@ -1226,7 +1254,7 @@ export default class Hmux extends View {
           .child(sectionTitle(t, "Sessions", null, h_flex().gap(1).child(addGroup).child(addSession))),
       )
       .children(groups().map((g) => this.groupBlock(t, g)))
-      .children(localAuto.map((a) => this.autoGroupBlock(t, a)))
+      .children(auto.map((a) => this.autoGroupBlock(t, a)))
       // Sessions in no group sit below their own label, so they never read as a
       // group's children.
       .when(separated, (el) =>
@@ -1236,9 +1264,7 @@ export default class Hmux extends View {
             .child(div().flex_1().h(1).bg(t.border)),
         ),
       )
-      .child(this.rowsBlock(t, UNGROUPED))
-      // Each machine's sessions at the very bottom, under the machine.
-      .children(machineAuto.map((a) => this.autoGroupBlock(t, a)));
+      .child(this.rowsBlock(t, UNGROUPED));
   }
 
   // An automatic group: the sessions that share one working folder. Unlike a
@@ -1247,7 +1273,7 @@ export default class Hmux extends View {
     const key = `a:${a.key}`;
     const open = this.expanded.has(key);
     const entries = autoSessions(a.key);
-    const label = a.machine ? a.machine : shortPath(a.cwd);
+    const label = shortPath(a.cwd);
     const head = h_flex()
       .id(`hmux-auto-${a.key}`)
       .mx(4)
@@ -1266,7 +1292,7 @@ export default class Hmux extends View {
         cx.notify();
       })
       .child(svg(open ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim))
-      .child(a.machine ? svg(ICON.server).size(11).flex_none().text_color(t.dim) : image(ICON.folderMac).w(12).h(12).flex_none())
+      .child(image(ICON.folderMac).w(12).h(12).flex_none())
       .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(label))
       .when(!open, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(`${entries.length}`)));
     return v_flex().child(head).when(open, (el) => el.child(this.rowsBlock(t, key)));
@@ -1438,8 +1464,8 @@ export default class Hmux extends View {
     });
   }
 
-  // SSH machines: status and a way to add one. Their sessions are listed in
-  // the Sessions section above (click one to switch straight to it).
+  // SSH machines in the session footer: each folds open into its sessions (and
+  // the login tab that opens it); click a session to switch straight to it.
   machinesBlock(t) {
     const others = machines().filter((m) => m.name);
     const add = iconButton(t, "hmux-machine-add", ICON.plus, () => run("app.settings", { section: "machines" }), 10);
@@ -1468,8 +1494,10 @@ export default class Hmux extends View {
     if (!open) return header;
     const tone = { ready: t.done, loading: t.working, unavailable: t.idle };
     const word = { ready: "Connected", loading: "Connecting", unavailable: "Offline" };
-    const rows = others.map((m) =>
-      h_flex()
+    const rows = others.map((m) => {
+      const key = `m:${m.name}`;
+      const mOpen = this.expanded.has(key);
+      const head = h_flex()
         .id(`hmux-machine-${m.name}`)
         .h(ROW)
         .pl(8)
@@ -1479,32 +1507,74 @@ export default class Hmux extends View {
         .rounded(5)
         .text_size(11.5)
         .hover((s) => s.bg(t.hover))
-        .on_click(() => {
-          const now = Date.now();
-          if (this.machineClick && now - this.machineClick < 350) return; // a double-click is still one action
-          this.machineClick = now;
-          if (m.layout === "unavailable") {
-            // Offline: open the core's login prompt in a fresh session, so the
-            // password (or code) can be typed right here.
-            run("tab.new", { argv: ["hc", "machine", "login", m.name], name: `login ${m.name}` });
-          } else {
-            const first = spaces().find((s) => s.machine === m.name);
-            if (first) run("space.select", { id: first.id });
-            else run("space.new", { machine: m.name });
-          }
+        .on_click((_e, cx) => {
+          this.toggleExpanded(key);
+          cx.notify();
         })
         .on_mouse_down("right", (e, cx) => {
           cx.stop_propagation();
           openMenu({ kind: "machine", name: m.name }, e.position);
         })
+        .child(svg(mOpen ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim))
         .child(svg(ICON.server).size(11).flex_none().text_color(t.muted))
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(m.name))
         .child(div().size(6).flex_none().rounded(3).bg(tone[m.layout] ?? t.idle))
-        .child(div().flex_none().text_size(10).text_color(t.dim).child(word[m.layout] ?? "")),
-    );
+        .child(div().flex_none().text_size(10).text_color(t.dim).child(word[m.layout] ?? ""));
+      if (!mOpen) return head;
+      const body = [];
+      if (m.layout === "unavailable") {
+        body.push(
+          h_flex()
+            .id(`hmux-mlogin-${m.name}`)
+            .h(22)
+            .pl(24)
+            .pr(6)
+            .gap(6)
+            .items_center()
+            .rounded(4)
+            .hover((s) => s.bg(t.hover))
+            .on_click(() => run("tab.new", { argv: ["hc", "machine", "login", m.name], name: `login ${m.name}` }))
+            .child(svg(ICON.server).size(9).flex_none().text_color(t.dim))
+            .child(div().text_size(10.5).text_color(t.muted).child("Connect…")),
+        );
+      }
+      for (const s of spaces()) {
+        if (s.machine !== m.name) continue;
+        for (const tb of s.tabs) body.push(this.machineSessionRow(t, s, tb));
+      }
+      const login = localTabs().find((e) => e.tab.name === `login ${m.name}`);
+      if (login) body.push(this.machineSessionRow(t, login.space, login.tab));
+      if (!body.length) body.push(div().pl(24).py(2).text_size(10.5).text_color(t.dim).child("No sessions on this machine yet."));
+      return v_flex().child(head).child(v_flex().children(body));
+    });
     return v_flex()
       .child(header)
-      .child(v_flex().id("hmux-machines-list").max_h(160).overflow_y_scrollbar().pt(2).children(rows));
+      .child(v_flex().id("hmux-machines-list").max_h(260).overflow_y_scrollbar().pt(2).children(rows));
+  }
+
+  // One session under its machine (remote, or the login tab): click goes there.
+  machineSessionRow(t, s, tb) {
+    const here = tb.active && s.active;
+    const name = this.tabLabel(tb);
+    const cwd = shortPath(panes().find((p) => p.tab === tb.id && p.cwd)?.cwd ?? s.folder);
+    return h_flex()
+      .id(`hmux-msess-${tb.id}`)
+      .h(22)
+      .pl(24)
+      .pr(6)
+      .gap(6)
+      .items_center()
+      .rounded(4)
+      .when(here, (el) => el.bg(t.selected))
+      .hover((st) => st.bg(t.hover))
+      .on_click(() => {
+        if (!s.active) run("space.select", { id: s.id });
+        run("tab.select", { id: tb.id });
+      })
+      .child(svg(ICON.terminal).size(9).flex_none().text_color(t.dim))
+      .child(div().flex_none().max_w(150).truncate().text_size(10.5).text_color(here ? t.foreground : t.muted).child(name))
+      .child(div().flex_1().min_w(0).truncate().text_size(9.5).text_color(t.dim).child(cwd))
+      .child(statusMark(t, tb.status, 8) ?? div());
   }
 
   sessionSection(t, list) {
