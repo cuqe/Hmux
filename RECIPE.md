@@ -33,19 +33,20 @@ one slightly lighter background when active.
 `edge` divider on its right, 12px text. It scrolls (a slim scrollbar) except
 the Session footer, which stays pinned at the bottom.
 
-- **Agents** header: 10.5px semibold `dim` title with the agent count at 70%
-  opacity.
-- **Agent rows — 34px tall**, 4px side margin, 6px inner padding, 5px rounded,
-  7px gap between icon and text. Program icon at 14px (tinted or full color),
-  name in `foreground` when focused else `muted`, then a 10.5px `dim` sub-line
-  `space · session`. Pinned agents show a 10px accent pin before the name. A
-  blocked agent carries a `Needs you` chip: 16px tall, 5px side padding, 4px
-  rounded, `blocked` at 15% as its background, 10px semibold `blocked` text.
-  Otherwise a status mark sits at the right: a spinning ring (12px, 800ms per
-  turn) while working, a 6px dot for blocked, done and idle (5px).
-- **Sub-agent rows — 24px**, indented 14px per level (up to three levels),
-  with a small elbow (8×12px, `input` colored left+bottom border) instead of the
-  status mark; 11.5px `muted` name, 12px icon, 9px status mark.
+- **Agents** header: a 10px chevron, `Agents`, and the count at 70% opacity,
+  in 10.5px semibold `dim`; clicking the chevron folds the whole section.
+- **Agent rows — 28px tall**, one line: 4px side margin, 6px inner padding,
+  5px rounded. Program icon 13px, an optional 9px accent pin, the name at
+  11.5px (`foreground` focused, `muted` otherwise, capped 140px), then
+  `space · session` at 10px `dim` filling the rest. A blocked agent carries a
+  `Needs you` chip (15px tall, `blocked` at 15%, 9.5px semibold); otherwise a
+  9px status mark: a spinning ring (800ms per turn) while working, a 6px dot
+  for done and idle.
+- **Sub-agent rows — 22px**, indented 10px per level (up to three levels),
+  with a small elbow (8×10px, `input` colored left+bottom border); 11px
+  `muted` name, 11px icon, 8px status mark. Right-click either kind for Go to
+  agent, Pin/Unpin / Open in new tab, Peek, and **Delete agent** (asks, then
+  `terminal.kill`).
 - **Sessions** header: the `Sessions` title, then two 11px icon buttons at its
   right — `folder-plus` (make a group) and `+` (make a session).
 - **Group header rows — 22px**, 4px side margin, 5px rounded, a 5% `foreground`
@@ -60,8 +61,7 @@ the Session footer, which stays pinned at the bottom.
   time (`now`, `12m`, `3h`, `2d`) and the status mark at the right. Every row
   ends in a close `×` (10px icon, dim; white on the active row) that asks
   before closing. The active session is filled with the theme accent, name and
-  folder turn white (folder at 80% opacity), and the status mark is white; the
-  selection glides between rows with a smooth spring (314ms/0.9).
+  folder turn white (folder at 80% opacity), and the status mark is white.
 - **Session footer.** 10.5px `dim` text, top border. A `Session` title with
   `N spaces · M tabs` on the right; one chip per status present (6px dot +
   `Working 3`); then the focused pane's folder as `~/…` with a folder icon and
@@ -100,8 +100,9 @@ keep agent navigation in this same order (`setAgentOrder`).
 folds or unfolds it; double-click renames it; right-click offers Rename group
 and Delete group. A group's delete removes the group only — its sessions stay
 as loose sessions. Agent row: click focuses it (`agent.focus`); right-click
-offers Go to agent, Pin/Unpin (`terminal.pin`), Peek (`terminal.peek`).
-Sub-agent: Go to agent, Peek, Open in new tab (`terminal.keep`, `place: tab`).
+offers Go to agent, Pin/Unpin (`terminal.pin`), Peek (`terminal.peek`) and
+Delete agent (asks, then `terminal.kill`). Sub-agent: Go to agent, Peek, Open
+in new tab (`terminal.keep`, `place: tab`), Delete agent.
 Title-bar buttons: sidebar toggle, bell (popup), sun/moon (crossfade), `+`
 (new session). Pane header buttons: split (`pane.split`), zoom (`pane.zoom`),
 close (`pane.close`); clicking the header focuses the pane.
@@ -209,11 +210,11 @@ shipped with Herdr. The mod's own six (`bell`, `sun`, `moon`, `sidebar`,
 `server`, `folder-plus`) are Lucide; see THIRD_PARTY_NOTICES.md.
 
 Themes `hmux-white.json` / `hmux-black.json`: full `ansi` + `colors`. White —
-background `#ffffff`, canvas `#eceef2`, chrome `#f3f4f6`, accent `#2f6fde`,
-blocked `#c27a12`, done `#1f9d55`, idle `#9aa1aa`, glass `#ffffffb3`, edge
-`#0000001a`, wash `#eef1f7`→`#dfe3ea`. Black — background `#15171b`, canvas
-`#101114`, chrome `#1a1c21`, accent `#5b8def`, blocked `#e8a33d`, done
-`#4fbf7f`, glass `#1b1e26b8`, edge `#ffffff14`, wash `#222736`→`#0e0f12`.
+background `#ffffff`, canvas `#f2f2f7`, chrome `#f5f5f7`, accent `#007aff`,
+blocked `#d97706`, done `#28a745`, idle `#8e8e93`, glass `#ffffffb8`, edge
+`#00000014`, wash `#f5f5f8`→`#e9e9ee`. Black — background `#1a1a1e`, canvas
+`#141417`, chrome `#1f1f24`, accent `#0a84ff`, blocked `#ff9f0a`, done
+`#30d158`, glass `#1e1e24b8`, edge `#ffffff14`, wash `#26262b`→`#101013`.
 
 ## Watch out
 
@@ -234,9 +235,14 @@ blocked `#c27a12`, done `#1f9d55`, idle `#9aa1aa`, glass `#ffffffb3`, edge
   `wash_top`, `wash_bottom` are custom color names — without
   `themes/hmux-*.json` they fall back to the built-in themes and the layout
   loses its look.
-- **Row height is a constant.** The selection highlight is placed at
-  `index × SESSION_H` (58px) and springs `top`; group headers and machine rows
-  use `ROW` (22px). Changing a height without its constant misaligns things.
+- **Row height is a constant.** Session rows use `SESSION_H` (58px); group
+  headers, agent rows and machine rows use their own heights. Changing a
+  height without its constant misaligns drags.
+- **The active session has no overlay:** the row itself is accent-filled (the
+  old sliding highlight was removed). Only the accent color changes when the
+  active session changes.
+- **Fold state** lives in localStorage `expanded`: a folded Agents section is
+  `agents:off`, a folded group `g:<id>`, machines `m:*`.
 - **The fade overlay** is a separate window over everything: a layout switch
   closes it (theme already flipped — safe), and `settings().zoom` must exist; at
   zoom 1 with a missing `window.json` it assumes 3:2. The snapshot lives in
@@ -263,6 +269,8 @@ blocked `#c27a12`, done `#1f9d55`, idle `#9aa1aa`, glass `#ffffffb3`, edge
 4. `+` adds a session immediately (no folder picker) as a loose two-line row;
    the folder line shows its working folder; the active row is accent-filled
    with a white ×, and every row's × opens the close confirmation.
+5. The Agents header folds the list; agents are one line each; right-click on
+   an agent offers Delete agent, which asks and then kills that terminal.
 5. `folder-plus` adds `Group N` in edit mode; Enter saves; double-click renames;
    right-click → Delete group keeps its sessions in the loose list.
 6. Dragging a session onto a group header highlights it and files it there;

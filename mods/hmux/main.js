@@ -525,11 +525,15 @@ export default class Hmux extends View {
     }
     if (p.kind === "agent") {
       const a = agents().find((x) => x.address === p.id);
+      const kill = (id) =>
+        askToClose("Delete this agent?", "Its terminal and process will end. This can't be undone.", "Delete agent", { name: "terminal.kill", args: { terminal: id } });
       if (p.sub) {
         return [
           ["Go to agent", () => run("agent.focus", { terminal: p.id })],
           ["Peek", () => run("terminal.peek", { terminal: p.id })],
           ["Open in new tab", () => run("terminal.keep", { terminal: p.id, place: "tab" })],
+          null,
+          ["Delete agent", () => kill(p.id), true],
         ];
       }
       if (!a) return [];
@@ -537,6 +541,8 @@ export default class Hmux extends View {
         ["Go to agent", () => run("agent.focus", { terminal: a.address })],
         [a.pinned ? "Unpin" : "Pin to top", () => run("terminal.pin", { terminal: a.address, pinned: !a.pinned })],
         ["Peek", () => run("terminal.peek", { terminal: a.address })],
+        null,
+        ["Delete agent", () => kill(a.address), true],
       ];
     }
     return [];
@@ -885,26 +891,58 @@ export default class Hmux extends View {
   }
 
   // ── agents ─────────────────────────────────────────────────────────────────
+  // One compact line per agent; the header folds the whole section.
   agentsSection(t, list) {
     const sorted = [...list].sort(
       (a, b) => Number(b.pinned) - Number(a.pinned) || (RANK[b.status] ?? 0) - (RANK[a.status] ?? 0) || b.seq - a.seq,
     );
     setAgentOrder(sorted.map((a) => a.address));
-    const body = sorted.length
-      ? sorted.flatMap((a) => [this.agentRow(t, a), ...this.subAgentRows(t, a.address, 1)])
-      : [div().px(10).py(4).text_size(11).text_color(t.dim).child("Agents you start show up here.")];
-    return v_flex().child(sectionTitle(t, "Agents", list.length || null)).children(body);
+    const open = !this.expanded.has("agents:off");
+    const body = !open
+      ? []
+      : sorted.length
+        ? sorted.flatMap((a) => [this.agentRow(t, a), ...this.subAgentRows(t, a.address, 1)])
+        : [div().px(10).py(4).text_size(11).text_color(t.dim).child("Agents you start show up here.")];
+    const fold = div()
+      .id("hmux-agents-fold")
+      .flex_none()
+      .p(2)
+      .rounded(4)
+      .hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => {
+        this.toggleExpanded("agents:off");
+        cx.notify();
+      })
+      .child(svg(open ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim));
+    return v_flex()
+      .child(
+        h_flex()
+          .h(22)
+          .px(6)
+          .pt(6)
+          .gap(5)
+          .items_center()
+          .flex_none()
+          .text_size(10.5)
+          .font_semibold()
+          .text_color(t.dim)
+          .child(fold)
+          .child(div().child("Agents"))
+          .when(list.length > 0, (el) => el.child(div().text_color(t.dim).opacity(0.7).child(String(list.length))))
+          .child(div().flex_1()),
+      )
+      .children(body);
   }
 
   agentRow(t, a) {
     const name = clean(a.title) || a.program?.name || "agent";
-    const sub = `${a.space_name} · ${a.tab_name}`;
+    const where = `${a.space_name} · ${a.tab_name}`;
     return h_flex()
       .id(`hmux-agent-${a.address}`)
       .mx(4)
       .px(6)
-      .h(34)
-      .gap(7)
+      .h(28)
+      .gap(6)
       .items_center()
       .rounded(5)
       .when(a.focused, (el) => el.bg(t.selected))
@@ -914,20 +952,14 @@ export default class Hmux extends View {
         cx.stop_propagation();
         openMenu({ kind: "agent", id: a.address }, e.position);
       })
-      .child(programIcon(a.program, 14, t.muted) ?? div().size(14).flex_none())
-      .child(
-        v_flex()
-          .flex_1()
-          .min_w(0)
-          .child(h_flex().gap(4).items_center().min_w(0)
-            .when(a.pinned, (el) => el.child(svg(ICON.pin).size(10).flex_none().text_color(t.accent)))
-            .child(div().flex_1().min_w(0).truncate().text_color(a.focused ? t.foreground : t.muted).child(name)))
-          .child(div().truncate().text_size(10.5).text_color(t.dim).child(sub)),
-      )
+      .child(programIcon(a.program, 13, t.muted) ?? div().size(13).flex_none())
+      .when(a.pinned, (el) => el.child(svg(ICON.pin).size(9).flex_none().text_color(t.accent)))
+      .child(div().flex_none().max_w(140).truncate().text_size(11.5).text_color(a.focused ? t.foreground : t.muted).child(name))
+      .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.dim).child(where))
       .when(a.status === "blocked", (el) =>
-        el.child(div().flex_none().px(5).h(16).flex().items_center().rounded(4).bg(t.blocked + "26").text_size(10).font_semibold().text_color(t.blocked).child(STATUS_LABEL.blocked)),
+        el.child(div().flex_none().px(5).h(15).flex().items_center().rounded(4).bg(t.blocked + "26").text_size(9.5).font_semibold().text_color(t.blocked).child(STATUS_LABEL.blocked)),
       )
-      .when(a.status !== "blocked", (el) => el.child(statusMark(t, a.status) ?? div()));
+      .when(a.status !== "blocked", (el) => el.child(statusMark(t, a.status, 9) ?? div()));
   }
 
   // Sub-agents under their parent, indented by depth (at most 3 deep).
@@ -941,7 +973,7 @@ export default class Hmux extends View {
         .mx(4)
         .pl(6 + depth * 14)
         .pr(6)
-        .h(24)
+        .h(22)
         .gap(6)
         .items_center()
         .rounded(5)
@@ -951,10 +983,10 @@ export default class Hmux extends View {
           cx.stop_propagation();
           openMenu({ kind: "agent", id: k.address, sub: true }, e.position);
         })
-        .child(div().w(8).h(12).flex_none().border_l(1).border_b(1).border_color(t.input))
-        .child(programIcon(k.program, 12, t.dim) ?? div().size(12).flex_none())
-        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(name))
-        .child(statusMark(t, st, 9) ?? div());
+        .child(div().w(8).h(10).flex_none().border_l(1).border_b(1).border_color(t.input))
+        .child(programIcon(k.program, 11, t.dim) ?? div().size(11).flex_none())
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(name))
+        .child(statusMark(t, st, 8) ?? div());
       return [row, ...this.subAgentRows(t, k.address, depth + 1)];
     });
   }
@@ -1024,7 +1056,7 @@ export default class Hmux extends View {
     return v_flex().child(head).when(open, (el) => el.child(this.rowsBlock(t, g.id)));
   }
 
-  // The sessions of one section with the sliding selection highlight.
+  // The sessions of one section.
   rowsBlock(t, section) {
     const entries = sessionsIn(section);
     if (!entries.length) {
@@ -1034,20 +1066,7 @@ export default class Hmux extends View {
     }
     const ids = entries.map((e) => e.tab.id);
     const rows = entries.map((e) => this.tabRow(t, e.space, e.tab, ids, { section }));
-    const activeIdx = entries.findIndex((e) => e.tab.active && e.space.active);
-    if (activeIdx < 0) return div().pl(6).child(v_flex().children(rows));
-    const sp = spring("smooth");
-    let highlight = div()
-      .id(`hmux-hl-${section}-${this.gen}`)
-      .absolute()
-      .left(4)
-      .right(4)
-      .h(SESSION_H)
-      .top(activeIdx * SESSION_H + this.offsetOf("tab", section, ids[activeIdx]))
-      .rounded(5)
-      .bg(t.selected);
-    if (sp) highlight = highlight.spring("top", sp);
-    return div().relative().pl(6).child(highlight).child(v_flex().children(rows));
+    return div().pl(6).child(v_flex().children(rows));
   }
 
   createGroup() {
@@ -1130,24 +1149,7 @@ export default class Hmux extends View {
     const tabs = s.tabs.filter((tb) => !tb.settled || tb.active);
     const tabIds = tabs.map((tb) => tb.id);
     const rows = tabs.map((tb) => this.tabRow(t, s, tb, tabIds));
-    if (!s.active) return wrap(v_flex().child(head).child(div().pl(6).child(v_flex().children(rows))));
-
-    const idx = Math.max(0, tabs.findIndex((tb) => tb.active));
-    const activeId = tabs[idx]?.id;
-    const sp = spring("smooth");
-    let highlight = div()
-      .id(`hmux-tab-hl-${s.id}-${this.gen}`)
-      .absolute()
-      .left(4)
-      .right(4)
-      .h(SESSION_H)
-      .top(idx * SESSION_H + (activeId ? this.offsetOf("tab", s.id, activeId) : 0))
-      .rounded(5)
-      .bg(t.selected);
-    if (sp) highlight = highlight.spring("top", sp);
-    return wrap(v_flex()
-      .child(head)
-      .child(div().relative().pl(6).child(highlight).child(v_flex().children(rows))));
+    return wrap(v_flex().child(head).child(div().pl(6).child(v_flex().children(rows))));
   }
 
   // Unnamed sessions are called by their index: use the agent's title.

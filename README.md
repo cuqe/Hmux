@@ -17,9 +17,11 @@ session menu uses Finder and `pbcopy`).
 - **Title bar (32px):** sidebar toggle, notification bell with an unread badge,
   the current space · session, sun/moon theme switch, new session. Drag the
   window by this bar; double-click maximizes.
-- **Agents:** every agent with its program icon and status. Pinned agents stay
-  on top, then by urgency: needs you, done, working, idle. Sub-agents nest under
-  the agent that started them (three levels).
+- **Agents:** one compact line per agent with its program icon and status; the
+  header folds the whole section. Pinned agents stay on top, then by urgency:
+  needs you, done, working, idle. Sub-agents nest under the agent that started
+  them (three levels). Right-click: Go to agent, Pin/Unpin, Peek, **Delete
+  agent** (asks first).
 - **Sessions:** one flat list, not tied to Herdr's folder spaces.
   - `+` starts a new session right away — no folder picker, always a fresh one.
   - The folder-plus button next to it creates a **group**.
