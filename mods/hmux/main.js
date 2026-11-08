@@ -306,6 +306,7 @@ export default class Hmux extends View {
   init(_props, cx) {
     this.hovered = false;
     this.rowHover = null; // the session row under the pointer (shows its ×)
+    this.machineHover = null; // the machine session row under the pointer
     this.inboxHover = null; // the notification row under the pointer (shows its ×)
     this.drag = null; // { kind: "space" | "tab", id, scope, label, start: {x,y}, active }
     this.pending = null; // after a drop: keep the preview until the new order arrives
@@ -1514,12 +1515,8 @@ export default class Hmux extends View {
         .child(svg(ICON.server).size(11).flex_none().text_color(t.muted))
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(m.name))
         .child(div().size(6).flex_none().rounded(3).bg(tone[m.layout] ?? t.idle))
-        // A plus opens the machine: its first space, or a new one.
-        .child(iconButton(t, `hmux-mopen-${m.name}`, ICON.plus, () => {
-          const first = spaces().find((s) => s.machine === m.name);
-          if (first) run("space.select", { id: first.id });
-          else run("space.new", { machine: m.name });
-        }, 10));
+        // A plus makes a new space on that machine.
+        .child(iconButton(t, `hmux-mnew-${m.name}`, ICON.plus, () => run("space.new", { machine: m.name }), 10));
       if (!mOpen) return head;
       const body = [];
       if (m.layout === "unavailable") {
@@ -1552,11 +1549,29 @@ export default class Hmux extends View {
       .child(v_flex().id("hmux-machines-list").max_h(260).overflow_y_scrollbar().pt(2).children(rows));
   }
 
-  // One session under its machine (remote, or the login tab): click goes there.
+  // One session under its machine (remote, or the login tab): click goes there,
+  // hover swaps the status for an × that closes it.
   machineSessionRow(t, s, tb) {
     const here = tb.active && s.active;
+    const hovered = this.machineHover === tb.id;
     const name = this.tabLabel(tb);
     const cwd = shortPath(panes().find((p) => p.tab === tb.id && p.cwd)?.cwd ?? s.folder);
+    const close = div()
+      .id(`hmux-msess-x-${tb.id}`)
+      .flex_none()
+      .size(16)
+      .rounded(8)
+      .flex()
+      .items_center()
+      .justify_center()
+      .bg(t.foreground + "12")
+      .hover((st) => st.bg(t.foreground + "24"))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        askToClose("Close this session?", "Its terminals and agents will end. This can't be undone.", "Close session", { name: "tab.close", args: { id: tb.id, confirmed: true } });
+      })
+      .child(svg(ICON.close).size(8).flex_none().text_color(t.muted));
     return h_flex()
       .id(`hmux-msess-${tb.id}`)
       .h(22)
@@ -1567,6 +1582,10 @@ export default class Hmux extends View {
       .rounded(4)
       .when(here, (el) => el.bg(t.selected))
       .hover((st) => st.bg(t.hover))
+      .on_hover((h, cx) => {
+        this.machineHover = h ? tb.id : this.machineHover === tb.id ? null : this.machineHover;
+        cx.notify();
+      })
       .on_click(() => {
         if (!s.active) run("space.select", { id: s.id });
         run("tab.select", { id: tb.id });
@@ -1574,7 +1593,8 @@ export default class Hmux extends View {
       .child(svg(ICON.terminal).size(9).flex_none().text_color(t.dim))
       .child(div().flex_none().max_w(150).truncate().text_size(10.5).text_color(here ? t.foreground : t.muted).child(name))
       .child(div().flex_1().min_w(0).truncate().text_size(9.5).text_color(t.dim).child(cwd))
-      .child(statusMark(t, tb.status, 8) ?? div());
+      .when(hovered, (el) => el.child(close))
+      .when(!hovered && Boolean(statusMark(t, tb.status, 8)), (el) => el.child(statusMark(t, tb.status, 8)));
   }
 
   sessionSection(t, list) {
