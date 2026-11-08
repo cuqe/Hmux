@@ -305,6 +305,7 @@ function askToClose(title, body, yes, command) {
 export default class Hmux extends View {
   init(_props, cx) {
     this.hovered = false;
+    this.lastNav = null; // { id, at } for our own double-click detection
     this.rowHover = null; // the session row under the pointer (shows its ×)
     this.machineHover = null; // the machine session row under the pointer
     this.inboxHover = null; // the notification row under the pointer (shows its ×)
@@ -670,39 +671,30 @@ export default class Hmux extends View {
                     .child(
                       h_flex().gap(8).items_center().min_w(0)
                         .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().child(n.title))
-                        .when(!hovered, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(clock(n.at)))),
+                        .when(hovered, (el) =>
+                          el.child(
+                            div()
+                              .id(`hmux-inbox-x-${n.id}`)
+                              .flex_none()
+                              .size(16)
+                              .rounded(8)
+                              .flex()
+                              .items_center()
+                              .justify_center()
+                              .bg(t.foreground + "14")
+                              .hover((s) => s.bg(t.foreground + "26"))
+                              .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+                              .on_click((_e, cx) => {
+                                cx.stop_propagation();
+                                setShared(INBOX_KEY, inbox().filter((x) => x.id !== n.id));
+                              })
+                              .child(svg(ICON.close).size(9).flex_none().text_color(t.muted)),
+                          ),
+                        )
+                        .child(div().flex_none().text_size(11).text_color(t.dim).child(clock(n.at))),
                     )
                     .child(div().truncate().text_size(11).text_color(t.dim).child(alive ? n.where : `${n.where} · ended`))
                     .child(div().text_size(11).text_color(t.dim).child(INBOX_TEXT[n.status] ?? "")),
-                )
-                // Hovering swaps the time for the delete button, right at the wall.
-                .when(hovered, (el) =>
-                  el.child(
-                    div()
-                      .absolute()
-                      .right(6)
-                      .top(0)
-                      .bottom(0)
-                      .flex()
-                      .items_center()
-                      .child(
-                        div()
-                          .id(`hmux-inbox-x-${n.id}`)
-                          .size(16)
-                          .rounded(8)
-                          .flex()
-                          .items_center()
-                          .justify_center()
-                          .bg(t.foreground + "14")
-                          .hover((s) => s.bg(t.foreground + "26"))
-                          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-                          .on_click((_e, cx) => {
-                            cx.stop_propagation();
-                            setShared(INBOX_KEY, inbox().filter((x) => x.id !== n.id));
-                          })
-                          .child(svg(ICON.close).size(9).flex_none().text_color(t.muted)),
-                      ),
-                  ),
                 );
             }),
           )
@@ -1030,8 +1022,8 @@ export default class Hmux extends View {
       .border_1()
       .border_color(t.accent)
       .shadow_sm()
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      // A press outside the field saves; presses inside are the Input's own.
+      .on_mouse_down_out((_e, cx) => this.commitEdit(cx))
       .on_key_down((e, cx) => {
         if (e.key !== "escape") return;
         this.commitEdit(cx, true);
@@ -1150,11 +1142,8 @@ export default class Hmux extends View {
       .border_1()
       .border_color(lifted ? t.accent : "#00000000")
       .when(lifted, (r) => r.bg(t.raised).shadow_md())
-      .on_mouse_down("left", (e, cx) => {
-        if (this.edit) {
-          this.commitEdit(cx);
-          return;
-        }
+      .on_mouse_down("left", (e) => {
+        if (this.edit) return; // the editor's own outside-press saves
         this.drag = { kind, id, scope: key, section: key, mode, siblings, start: e.position, active: false, dy: 0, target: siblings.indexOf(id) };
       })
       .on_mouse_up("left", (e, cx) => {
@@ -1456,6 +1445,19 @@ export default class Hmux extends View {
       if (!s.active) run("space.select", { id: s.id });
       run("tab.select", { id: tb.id });
     };
+    // Our own double-click: the first click re-renders the row, which resets
+    // the platform's click_count, so compare times instead.
+    const click = (cx) => {
+      const now = Date.now();
+      const last = this.lastNav;
+      if (last && last.id === tb.id && now - last.at < 350) {
+        this.lastNav = null;
+        this.startEdit("tab", tb.id, cx);
+        return;
+      }
+      this.lastNav = { id: tb.id, at: now };
+      go();
+    };
     const mark = statusMark(t, tb.status, 14, here, 8);
     const hovered = this.rowHover === tb.id;
     const closeBox = div()
@@ -1516,7 +1518,7 @@ export default class Hmux extends View {
       section: opts.section,
       mode: opts.mode ?? (opts.section ? "local" : "machine"),
       siblings,
-      onClick: go,
+      onClick: click,
       onDouble: (cx) => this.startEdit("tab", tb.id, cx),
       onMenu: (at) => openMenu({ kind: "tab", id: tb.id }, at),
     });
@@ -1664,7 +1666,15 @@ export default class Hmux extends View {
         this.machineHover = h ? tb.id : this.machineHover === tb.id ? null : this.machineHover;
         cx.notify();
       })
-      .on_click(() => {
+      .on_click((_e, cx) => {
+        const now = Date.now();
+        const last = this.lastNav;
+        if (last && last.id === tb.id && now - last.at < 350) {
+          this.lastNav = null;
+          this.startEdit("tab", tb.id, cx);
+          return;
+        }
+        this.lastNav = { id: tb.id, at: now };
         if (!s.active) run("space.select", { id: s.id });
         run("tab.select", { id: tb.id });
       })
