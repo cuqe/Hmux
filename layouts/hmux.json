@@ -1,0 +1,118 @@
+{
+  "id": "root",
+  "type": "column",
+  "theme": {
+    "light": "hmux-white",
+    "dark": "hmux-black"
+  },
+  "font": "Menlo",
+  "font_size": 13,
+  "ui_font": "Geist",
+  "terminal_padding": [
+    4,
+    6
+  ],
+  "terminal_opacity": 1,
+  "titlebar": "none",
+  "traffic_lights": [
+    12,
+    10
+  ],
+  "background": {
+    "gradient": [
+      "wash_top",
+      "wash_bottom"
+    ],
+    "angle": 160
+  },
+  "preview": "layouts/hmux.svg",
+  "children": [
+    {
+      "id": "titlebar",
+      "type": "block",
+      "size": {
+        "px": 32
+      },
+      "window_drag": true,
+      "background": "glass",
+      "content": {
+        "mod": "hmux",
+        "props": {
+          "role": "top"
+        }
+      }
+    },
+    {
+      "id": "body",
+      "type": "row",
+      "divider": {
+        "width": 1,
+        "color": "edge"
+      },
+      "children": [
+        {
+          "id": "sidebar",
+          "type": "column",
+          "size": {
+            "px": 232
+          },
+          "min": 180,
+          "max": 380,
+          "background": "glass",
+          "children": [
+            {
+              "id": "sidebar-body",
+              "type": "block",
+              "content": {
+                "mod": "hmux",
+                "props": {
+                  "role": "sidebar"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "work",
+          "type": "column",
+          "resizable": false,
+          "children": [
+            {
+              "id": "main",
+              "type": "block",
+              "background": "hairline",
+              "content": {
+                "tab": "active",
+                "pane": {
+                  "gap": 1,
+                  "radius": 0,
+                  "background": "background",
+                  "lone": false,
+                  "border": {
+                    "width": 0,
+                    "color": "border"
+                  },
+                  "focus": {
+                    "width": 1,
+                    "color": "focusring"
+                  },
+                  "header": {
+                    "content": {
+                      "mod": "hmux",
+                      "props": {
+                        "role": "pane"
+                      }
+                    },
+                    "height": 20,
+                    "position": "top",
+                    "reveal": "always"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

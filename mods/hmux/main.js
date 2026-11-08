@@ -1,0 +1,1166 @@
+// hmux-style chrome for the hmux layout. One mod, several roles (props.role):
+//   "top"     the full-width title bar: sidebar toggle, notifications, theme, new tab
+//   "sidebar" agents (with sub-agents), this computer's folders and their sessions, session status with SSH machines
+//   "pane"    a slim per-pane header with split / zoom / close on hover
+//   "inbox"   the notifications popup (opened by "top")
+//   "menu"    right-click menus for a session (tab), a folder (space) or an agent
+//   "confirm" asks before closing a session or folder
+//   "fade"    the theme crossfade: a picture of the window that fades out over the new theme
+
+import { View, div, svg, image } from "gpui-kit";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import {
+  agents, spaces, panes, focused, machines, terminals, props, run, theme, themes, home, layout, setAgentOrder,
+  settings, appHome, readTextFile, writeTextFile, notify, shared, setShared, openOverlay, closeOverlay, exec,
+} from "herdr";
+import { detectReducedMotion, isReduced, transition, spring, loopMs, durationMs, fadeDelay, fadeTotalMs } from "./motion.js";
+
+const ROW = 22; // session row height: the selection highlight springs by this step
+const THEME = { light: "hmux-white", dark: "hmux-black" };
+const INBOX_KEY = "hmux.inbox";
+const INBOX_SEEN = "hmux.inboxSeen";
+const RENAME_KEY = "hmux.rename"; // menu → sidebar: start editing a name
+const INBOX_MAX = 60;
+const INBOX_W = 320;
+const INBOX_H = 380;
+const INBOX_HEAD = 34;
+const DRAG_START = 4; // px the pointer travels before a press becomes a drag
+const ICON = {
+  plus: "mods/workspace-chrome/plus.svg",
+  spinner: "mods/workspace-chrome/spinner.svg",
+  branch: "mods/workspace-chrome/git-branch.svg",
+  folder: "mods/workspace-chrome/folder.svg",
+  pin: "mods/workspace-chrome/pin.svg",
+  splitRight: "mods/pane/split-right.svg",
+  splitDown: "mods/pane/split-down.svg",
+  zoom: "mods/pane/zoom.svg",
+  unzoom: "mods/pane/unzoom.svg",
+  close: "mods/pane/close.svg",
+  chevronRight: "mods/workspace-chrome/chevron-right.svg",
+  chevronDown: "mods/workspace-chrome/chevron-down.svg",
+  sun: "mods/hmux/sun.svg",
+  moon: "mods/hmux/moon.svg",
+  bell: "mods/hmux/bell.svg",
+  sidebar: "mods/hmux/sidebar.svg",
+  server: "mods/hmux/server.svg",
+};
+const STATUS_LABEL = { working: "Working", blocked: "Needs you", done: "Done", idle: "Idle" };
+const INBOX_TEXT = { blocked: "Needs your input.", done: "Finished its work." };
+const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
+
+const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
+
+function shortPath(cwd) {
+  if (!cwd) return "";
+  const h = home();
+  return cwd === h ? "~" : cwd.startsWith(h + "/") ? "~" + cwd.slice(h.length) : cwd;
+}
+
+function clock(ms) {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// Short elapsed time: now · 12m · 3h · 2d
+function elapsed(since) {
+  if (!since) return "";
+  const m = Math.floor((Date.now() - since) / 60000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
+}
+
+function findNode(node, id) {
+  if (node?.id === id) return node;
+  for (const child of node?.children ?? []) {
+    const found = findNode(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+async function writeAppearance(value) {
+  const path = `${appHome()}/settings.json`;
+  const text = await readTextFile(path);
+  const data = text ? JSON.parse(text) : {};
+  data.appearance = value;
+  await writeTextFile(path, JSON.stringify(data, null, 2) + "\n", text);
+}
+
+// ── theme crossfade ─────────────────────────────────────────────────────────
+const SNAP_DIR = ".cache/hmux"; // under appHome: hidden, so saving a picture reloads nothing
+
+function themeFailed() {
+  notify({ title: "Couldn't switch the theme.", body: "Check settings.json, then try again.", level: "warning" });
+}
+
+function programIcon(p, size, color) {
+  if (!p?.icon) return null;
+  return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
+}
+
+// Status mark: spinner while working (a static dot under reduced motion).
+function statusMark(t, status, size = 10) {
+  if (status === "working") {
+    return isReduced()
+      ? div().size(6).flex_none().rounded(3).bg(t.working)
+      : svg(ICON.spinner).size(size).flex_none().text_color(t.working).spin(loopMs("spinner"));
+  }
+  if (status === "blocked") return div().size(6).flex_none().rounded(3).bg(t.blocked);
+  if (status === "done") return div().size(6).flex_none().rounded(3).bg(t.done);
+  if (status === "idle") return div().size(5).flex_none().rounded(3).bg(t.idle);
+  return null;
+}
+
+// onClick gets the press position (window coordinates) for popups, and the click's cx.
+function iconButton(t, id, icon, onClick, size = 12, { active = false } = {}) {
+  let pressed = null;
+  return div()
+    .id(id)
+    .flex_none()
+    .p(4)
+    .rounded(5)
+    .text_color(active ? t.foreground : t.dim)
+    .when(active, (el) => el.bg(t.hover))
+    .hover((s) => s.bg(t.hover).text_color(t.foreground))
+    .on_mouse_down("left", (e, cx) => {
+      pressed = e.position;
+      cx.stop_propagation();
+    })
+    .on_click((_e, cx) => {
+      cx.stop_propagation();
+      onClick(pressed, cx);
+    })
+    .child(svg(icon).size(size));
+}
+
+function sectionTitle(t, label, count, trailing) {
+  return h_flex()
+    .h(22)
+    .px(10)
+    .pt(6)
+    .gap(6)
+    .items_center()
+    .flex_none()
+    .text_size(10.5)
+    .font_semibold()
+    .text_color(t.dim)
+    .child(div().child(label))
+    .when(count != null, (el) => el.child(div().text_color(t.dim).opacity(0.7).child(String(count))))
+    .child(div().flex_1())
+    .when(Boolean(trailing), (el) => el.child(trailing));
+}
+
+const inbox = () => (Array.isArray(shared(INBOX_KEY)) ? shared(INBOX_KEY) : []);
+const unread = () => {
+  const seen = Number(shared(INBOX_SEEN) ?? 0);
+  return inbox().filter((n) => n.at > seen).length;
+};
+
+// Sub-agents: live terminals another one started (`hc run`), keyed by their parent's address.
+function subAgentsOf(address) {
+  return terminals().filter((x) => x.parent === address && (x.state ?? "live") === "live");
+}
+const subStatus = (s) => (s === "error" ? "blocked" : s === "done" ? "idle" : s);
+
+function openMenu(spec, at) {
+  openOverlay({ mod: "hmux", props: { role: "menu", ...spec }, kind: "popup", width: 200, height: 300, at: at ?? "pointer" });
+}
+
+function askToClose(title, body, yes, command) {
+  openOverlay({ mod: "hmux", props: { role: "confirm", title, body, yes, command }, kind: "dialog", width: 360, height: 170 });
+}
+
+export default class Hmux extends View {
+  init(_props, cx) {
+    this.hovered = false;
+    this.drag = null; // { kind: "space" | "tab", id, scope, label, start: {x,y}, active }
+    this.pending = null; // after a drop: keep the preview until the new order arrives
+    this.heights = {}; // measured folder group heights, for the live preview
+    this.gen = 0; // bumped after a drop so rows remount in their new places without sliding back
+    this.edit = null; // { kind, id, input }
+    this.renameSeen = Date.now();
+    try {
+      this.expanded = new Set(JSON.parse(localStorage.getItem("expanded") ?? "null") ?? []);
+    } catch {
+      this.expanded = new Set();
+    }
+    cx.spawn(async (cx) => {
+      await detectReducedMotion();
+      cx.notify();
+    });
+    const role = props()?.role;
+    if (role === "top") exec("rm", ["-f", `${appHome()}/mods/hmux/.morph-backup.json`]).catch(() => {}); // the old morph's leftover
+    if (role === "fade") this.startFade(cx);
+    if (role === "confirm") {
+      this.handle = cx.focus_handle();
+      this.handle.focus();
+    }
+    // Elapsed times in the session list move on their own.
+    if ((role ?? "sidebar") === "sidebar") cx.timer.every(30000, (cx) => cx.notify());
+  }
+
+  render(cx) {
+    const role = props()?.role ?? "sidebar";
+    if (role === "top") return this.renderTop();
+    if (role === "fade") return this.renderFade();
+    if (role === "pane") return this.renderPane();
+    if (role === "inbox") return this.renderInbox();
+    if (role === "menu") return this.renderMenu();
+    if (role === "confirm") return this.renderConfirm();
+    return this.renderSidebar(cx);
+  }
+
+  // ── title bar ──────────────────────────────────────────────────────────────
+  renderTop() {
+    const t = theme();
+    this.trackInbox();
+    const sidebarHidden = Boolean(findNode(layout(), "sidebar")?.hidden);
+    const count = unread();
+    const space = spaces().find((s) => s.active);
+    const tab = space?.tabs.find((tb) => tb.active);
+    const where = space ? `${space.name}${tab ? ` · ${tab.named ? tab.name : `Command ${tab.index}`}` : ""}` : "";
+    const bell = div()
+      .relative()
+      .flex_none()
+      .child(iconButton(t, "hmux-top-bell", ICON.bell, (at) => this.openInbox(at), 13))
+      .when(count > 0, (el) =>
+        el.child(
+          div().absolute().top(0).right(-2).min_w(13).h(13).px(3).rounded(7).bg(t.accent)
+            .flex().items_center().justify_center()
+            .text_size(8.5).font_semibold().text_color(t.accent_foreground)
+            .child(count > 9 ? "9+" : String(count)),
+        ),
+      );
+    return h_flex()
+      .id("hmux-top")
+      .on_size_change((size) => {
+        this.topWidth = size.width; // the window's width in mod pixels, for the crossfade cover
+      })
+      .size_full()
+      .pl(78) // room for the macOS window buttons
+      .pr(8)
+      .gap(2)
+      .items_center()
+      .text_size(11.5)
+      .child(iconButton(t, "hmux-top-sidebar", ICON.sidebar, () => run("layout.toggle", { id: "sidebar" }), 13, { active: !sidebarHidden }))
+      .child(bell)
+      .child(div().flex_1().min_w(0).px(10).truncate().text_color(t.dim).child(where))
+      .child(iconButton(t, "hmux-top-theme", settings()?.dark ? ICON.sun : ICON.moon, (_at, cx) => this.flipTheme(cx), 13))
+      .child(iconButton(t, "hmux-top-new", ICON.plus, () => run("tab.new", {}), 13));
+  }
+
+  // Records agents turning blocked or done, for the notifications popup. Only the title bar does this.
+  trackInbox() {
+    const list = agents();
+    const prev = this.lastStatus;
+    this.lastStatus = new Map(list.map((a) => [a.address, a.status]));
+    if (!prev) return; // first look: today's states aren't news
+    const fresh = list
+      .filter((a) => (a.status === "blocked" || a.status === "done") && prev.get(a.address) !== a.status)
+      .map((a) => ({
+        id: `${a.address}-${Date.now()}`,
+        address: a.address,
+        status: a.status,
+        title: clean(a.title) || a.program?.name || "agent",
+        where: `${a.space_name} · ${a.tab_name}`,
+        icon: a.program?.icon ?? null,
+        tint: Boolean(a.program?.tint),
+        at: Date.now(),
+      }));
+    if (fresh.length) setShared(INBOX_KEY, [...fresh, ...inbox()].slice(0, INBOX_MAX));
+  }
+
+  openInbox(at) {
+    setShared(INBOX_SEEN, Date.now());
+    openOverlay({
+      mod: "hmux",
+      props: { role: "inbox" },
+      kind: "popup",
+      width: INBOX_W,
+      height: INBOX_H,
+      at: at ? { x: at.x - 12, y: at.y + 14 } : "pointer",
+    });
+  }
+
+  // Crossfade: a picture of the window as it is covers it, the theme switches underneath,
+  // then the picture fades out natively (every frame, not file by file). Under reduced
+  // motion the theme switches at once.
+  flipTheme(cx) {
+    if (this.fading) return;
+    const to = settings()?.dark ? "light" : "dark";
+    if (isReduced() || !this.topWidth) {
+      writeAppearance(to).catch(themeFailed);
+      return;
+    }
+    this.fading = true;
+    cx.spawn(async (cx) => {
+      try {
+        const rel = `${SNAP_DIR}/snap-${Date.now()}.png`;
+        await exec("mkdir", ["-p", `${appHome()}/${SNAP_DIR}`]);
+        const shot = await exec("herdr-app", ["shot", `${appHome()}/${rel}`]);
+        if (shot.code !== 0) throw new Error(shot.stderr);
+        const bounds = JSON.parse((await readTextFile(`${appHome()}/window.json`)) ?? "{}").bounds;
+        // The title bar reports window points; the cover's pixels get zoomed, so divide the zoom out.
+        const width = this.topWidth / (settings()?.zoom ?? 1);
+        const height = bounds ? (width * bounds[3]) / bounds[2] : width * 0.66;
+        openOverlay({
+          mod: "hmux",
+          props: { role: "fade", image: rel, to, width, height },
+          kind: "window",
+          key: "hmux-fade",
+          frame: "none",
+          width,
+          height,
+          at: { x: 0, y: 0 },
+        });
+      } catch {
+        writeAppearance(to).catch(themeFailed);
+      }
+      cx.timer.after(fadeTotalMs(), () => {
+        this.fading = false;
+      });
+    });
+  }
+
+  // ── theme crossfade cover ──────────────────────────────────────────────────
+  startFade(cx) {
+    const p = props();
+    this.faded = false;
+    // Give the picture a moment to load, then switch the theme under it.
+    cx.timer.after(fadeDelay("imageLoad"), (cx) => {
+      writeAppearance(p.to).catch(themeFailed);
+      // Once the new theme is drawn underneath, let the picture go.
+      cx.timer.after(fadeDelay("themeApply"), (cx) => {
+        this.faded = true;
+        cx.notify();
+        cx.timer.after(durationMs("themeFade") + 60, () => {
+          closeOverlay(props().overlay);
+          exec("rm", ["-f", `${appHome()}/${p.image}`]).catch(() => {});
+        });
+      });
+    });
+  }
+
+  renderFade() {
+    const p = props();
+    return div()
+      .id("hmux-fade")
+      .w(p.width)
+      .h(p.height)
+      .opacity(this.faded ? 0 : 1)
+      .transition("opacity", transition("themeFade", "inOut"))
+      .child(image(p.image).w(p.width).h(p.height));
+  }
+
+  // ── notifications popup ────────────────────────────────────────────────────
+  renderInbox() {
+    const t = theme();
+    const items = inbox();
+    const live = new Set(agents().map((a) => a.address));
+    const clear = div()
+      .id("hmux-inbox-clear")
+      .px(6)
+      .py(2)
+      .rounded(4)
+      .text_size(11)
+      .text_color(t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_click(() => setShared(INBOX_KEY, []))
+      .child("Clear all");
+    return v_flex()
+      .id("hmux-inbox")
+      .w_full()
+      .h(INBOX_H)
+      .bg(t.popover)
+      .text_size(12)
+      .text_color(t.foreground)
+      .child(
+        h_flex().h(INBOX_HEAD).px(12).items_center().flex_none().border_b(1).border_color(t.border)
+          .child(div().flex_1().font_semibold().child("Notifications"))
+          .when(items.length > 0, (el) => el.child(clear)),
+      )
+      .child(
+        items.length
+          ? v_flex().id("hmux-inbox-list").w_full().h(INBOX_H - INBOX_HEAD).flex_none().overflow_y_scrollbar().py(4).children(
+            items.map((n) => {
+              const pic = n.icon ? (n.tint ? svg(n.icon).size(14).flex_none().text_color(t.muted) : image(n.icon).w(14).h(14).flex_none()) : div().size(14).flex_none();
+              const alive = live.has(n.address);
+              return h_flex()
+                .id(`hmux-inbox-${n.id}`)
+                .mx(4)
+                .px(8)
+                .py(6)
+                .gap(8)
+                .items_start()
+                .rounded(5)
+                .when(alive, (el) => el.hover((s) => s.bg(t.hover)))
+                .on_click(() => {
+                  if (!alive) return;
+                  run("agent.focus", { terminal: n.address });
+                  closeOverlay(props().overlay);
+                })
+                .child(div().pt(1).child(pic))
+                .child(
+                  v_flex().flex_1().min_w(0).gap(1)
+                    .child(h_flex().gap(6).items_center()
+                      .child(div().flex_1().min_w(0).truncate().font_medium().child(n.title))
+                      .child(div().flex_none().text_size(10.5).text_color(t.dim).child(clock(n.at))))
+                    .child(div().text_size(11).text_color(n.status === "blocked" ? t.blocked : t.done).child(INBOX_TEXT[n.status] ?? ""))
+                    .child(div().truncate().text_size(10.5).text_color(t.dim).child(alive ? n.where : `${n.where} · Agent has ended`)),
+                );
+            }),
+          )
+          : v_flex().w_full().h(INBOX_H - INBOX_HEAD).flex_none().p(16).gap(4).items_center().justify_center().text_color(t.dim)
+            .child(div().child("No new notifications."))
+            .child(div().text_size(11).child("When an agent finishes or needs you, it shows up here.")),
+      );
+  }
+
+  // ── right-click menus ──────────────────────────────────────────────────────
+  menuItems() {
+    const p = props();
+    const all = spaces();
+    if (p.kind === "tab") {
+      const s = all.find((x) => x.tabs.some((tb) => tb.id === p.id));
+      const tb = s?.tabs.find((x) => x.id === p.id);
+      if (!tb) return [];
+      const go = () => {
+        if (!s.active) run("space.select", { id: s.id });
+        run("tab.select", { id: tb.id });
+      };
+      return [
+        ["Go to session", go],
+        ["Rename", () => setShared(RENAME_KEY, { kind: "tab", id: tb.id, at: Date.now() })],
+        ...(tb.named ? [["Reset name", () => run("tab.rename", { id: tb.id, name: "" })]] : []),
+        null,
+        ["Split right", () => { go(); run("pane.split", { direction: "right" }); }],
+        ["Split down", () => { go(); run("pane.split", { direction: "down" }); }],
+        null,
+        ["Close session", () => askToClose("Close this session?", "Its terminals and agents will end. This can't be undone.", "Close session", { name: "tab.close", args: { id: tb.id, confirmed: true } }), true],
+      ];
+    }
+    if (p.kind === "space") {
+      const s = all.find((x) => x.id === p.id);
+      if (!s) return [];
+      const folder = s.folder || panes().find((x) => x.tab === s.tabs[0]?.id && x.cwd)?.cwd || "";
+      const local = !s.machine;
+      return [
+        ["New session", () => run("tab.new", { space: s.id })],
+        ["Rename", () => setShared(RENAME_KEY, { kind: "space", id: s.id, at: Date.now() })],
+        ...(s.named ? [["Reset name", () => run("space.rename", { id: s.id, name: "" })]] : []),
+        null,
+        ...(local && folder ? [["Reveal in Finder", () => exec("open", [folder]).catch(() => {})]] : []),
+        ...(folder ? [["Copy path", () => exec("sh", ["-c", 'printf %s "$1" | pbcopy', "sh", folder]).then(() => notify({ title: "Copied the path.", body: shortPath(folder), level: "info", timeout: 2500 })).catch(() => {})]] : []),
+        ...(s.branch ? [["New worktree", () => openOverlay({ mod: "worktree", kind: "dialog", width: 440, height: 260, props: { space: s.id, action: "new" } })]] : []),
+        null,
+        ["Close folder", () => askToClose("Close this folder?", "Its sessions and terminals will end. Files on disk stay as they are.", "Close folder", { name: "space.close", args: { id: s.id, confirmed: true } }), true],
+      ];
+    }
+    if (p.kind === "agent") {
+      const a = agents().find((x) => x.address === p.id);
+      if (p.sub) {
+        return [
+          ["Go to agent", () => run("agent.focus", { terminal: p.id })],
+          ["Peek", () => run("terminal.peek", { terminal: p.id })],
+          ["Open in new tab", () => run("terminal.keep", { terminal: p.id, place: "tab" })],
+        ];
+      }
+      if (!a) return [];
+      return [
+        ["Go to agent", () => run("agent.focus", { terminal: a.address })],
+        [a.pinned ? "Unpin" : "Pin to top", () => run("terminal.pin", { terminal: a.address, pinned: !a.pinned })],
+        ["Peek", () => run("terminal.peek", { terminal: a.address })],
+      ];
+    }
+    return [];
+  }
+
+  renderMenu() {
+    const t = theme();
+    const items = this.menuItems();
+    return v_flex()
+      .id("hmux-menu")
+      .w_full()
+      .p(4)
+      .bg(t.popover)
+      .text_size(12)
+      .children(
+        items.map((it, i) =>
+          it === null
+            ? div().h(1).my(3).mx(6).bg(t.border)
+            : h_flex()
+              .id(`hmux-menu-${i}`)
+              .h(26)
+              .px(10)
+              .items_center()
+              .rounded(5)
+              .text_color(it[2] ? t.blocked : t.foreground)
+              .hover((s) => s.bg(t.hover))
+              .on_click(() => {
+                closeOverlay(props().overlay);
+                it[1]();
+              })
+              .child(it[0]),
+        ),
+      );
+  }
+
+  renderConfirm() {
+    const t = theme();
+    const p = props() ?? {};
+    const keep = () => closeOverlay(p.overlay);
+    const yes = () => {
+      closeOverlay(p.overlay);
+      run(p.command.name, p.command.args ?? {});
+    };
+    const button = (id, label, danger, onClick) =>
+      h_flex().id(id).h(30).px(14).items_center().rounded(6)
+        .border_1().border_color(danger ? t.blocked : t.input)
+        .when(danger, (el) => el.bg(t.blocked).text_color("#ffffff"))
+        .when(!danger, (el) => el.text_color(t.foreground))
+        .hover((s) => s.opacity(0.85))
+        .on_click(onClick)
+        .child(label);
+    return v_flex()
+      .id("hmux-confirm")
+      .track_focus(this.handle)
+      .on_key_down((e, cx) => {
+        if (e.key === "escape" || e.key === "enter") keep(); // Enter keeps: the safe choice is the default
+        else return;
+        cx.stop_propagation();
+      })
+      .size_full()
+      .p(18)
+      .gap(10)
+      .bg(t.popover)
+      .text_size(13)
+      .text_color(t.foreground)
+      .child(div().font_semibold().child(p.title ?? ""))
+      .child(div().flex_1().text_size(12).text_color(t.muted).child(p.body ?? ""))
+      .child(h_flex().gap(8).justify_end()
+        .child(button("hmux-confirm-keep", "Keep", false, keep))
+        .child(button("hmux-confirm-yes", p.yes ?? "Close", true, yes)));
+  }
+
+  // ── sidebar ────────────────────────────────────────────────────────────────
+  renderSidebar(cx) {
+    const t = theme();
+    const list = agents();
+    // A newly shown space (by click, key or command) unfolds; the others keep their fold.
+    const shown = spaces().find((s) => s.active);
+    if (shown && shown.id !== this.lastShown) {
+      this.lastShown = shown.id;
+      if (!this.expanded.has(shown.id)) this.toggleExpanded(shown.id, true);
+    }
+    // "Rename" from a right-click menu.
+    const ask = shared(RENAME_KEY);
+    if (ask && ask.at > this.renameSeen) {
+      this.renameSeen = ask.at;
+      this.startEdit(ask.kind, ask.id, cx);
+    }
+    this.settlePending(cx);
+    return v_flex()
+      .id("hmux-sidebar")
+      .relative()
+      .size_full()
+      .text_size(12)
+      .text_color(t.foreground)
+      .on_mouse_move((e, cx) => {
+        const d = this.drag;
+        if (!d) return;
+        const dx = e.position.x - d.start.x;
+        const dy = e.position.y - d.start.y;
+        if (!d.active && Math.hypot(dx, dy) < DRAG_START) return;
+        d.active = true;
+        d.dy = dy;
+        d.target = this.targetFor(d);
+        cx.notify();
+      })
+      // Release: drop where the preview shows it.
+      .on_mouse_up("left", (_e, cx) => {
+        if (!this.drag) return;
+        if (this.drag.active) this.commitDrag(cx);
+        else this.endDrag();
+        cx.notify();
+      })
+      // Released outside the sidebar: the next press anywhere cancels it.
+      .on_mouse_down_out((_e, cx) => {
+        if (!this.drag) return;
+        this.endDrag();
+        cx.notify();
+      })
+      .child(
+        v_flex()
+          .id("hmux-sidebar-scroll")
+          .flex_1()
+          .min_h(0)
+          .overflow_y_scrollbar()
+          .pb(6)
+          .child(this.agentsSection(t, list))
+          .child(this.tabsSection(t)),
+      )
+      .child(this.sessionSection(t, list));
+  }
+
+  endDrag() {
+    this.drag = null;
+  }
+
+  saveExpanded() {
+    try {
+      localStorage.setItem("expanded", JSON.stringify([...this.expanded]));
+    } catch {}
+  }
+
+  toggleExpanded(id, open = !this.expanded.has(id)) {
+    if (open) this.expanded.add(id);
+    else this.expanded.delete(id);
+    this.saveExpanded();
+  }
+
+  // ── inline rename ──────────────────────────────────────────────────────────
+  // Folder names are Herdr's labels only (space.rename): the folder on disk keeps its name.
+  startEdit(kind, id, cx) {
+    const all = spaces();
+    const s = kind === "space" ? all.find((x) => x.id === id) : all.find((x) => x.tabs.some((tb) => tb.id === id));
+    const tb = kind === "tab" ? s?.tabs.find((x) => x.id === id) : null;
+    if (!s || (kind === "tab" && !tb)) return;
+    if (kind === "tab" && !this.expanded.has(s.id)) this.toggleExpanded(s.id, true);
+    // Starts from the name shown in the list.
+    const shownName = kind === "tab" ? this.tabLabel(tb) : s.name;
+    const input = InputState.new({});
+    input.set_value(shownName);
+    this.edit = { kind, id, input, done: false, original: shownName };
+    input.on("submit", (_e, cx) => this.commitEdit(cx));
+    input.on("blur", (_e, cx) => this.commitEdit(cx));
+    cx.timer.after(30, () => input.focus());
+  }
+
+  commitEdit(cx, cancel = false) {
+    const e = this.edit;
+    if (!e || e.done) return;
+    e.done = true;
+    const name = e.input.value().trim();
+    // Unchanged: leave it alone, so an automatic name keeps following its folder or agent.
+    if (!cancel && name !== e.original) run(e.kind === "tab" ? "tab.rename" : "space.rename", { id: e.id, name });
+    this.edit = null;
+    cx.notify();
+  }
+
+  editor(t, kind, id) {
+    if (this.edit?.kind !== kind || this.edit.id !== id) return null;
+    return div()
+      .id(`hmux-edit-${id}`)
+      .flex_1()
+      .min_w(0)
+      .h(18)
+      .px(4)
+      .flex()
+      .items_center()
+      .rounded(4)
+      .bg(t.background)
+      .border_1()
+      .border_color(t.accent)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      .on_key_down((e, cx) => {
+        if (e.key !== "escape") return;
+        this.commitEdit(cx, true);
+        cx.stop_propagation();
+      })
+      .child(Input.new(this.edit.input).w_full().text_size(12).text_color(t.foreground));
+  }
+
+  // ── drag (folders and sessions) ────────────────────────────────────────────
+  // Live reorder: past DRAG_START px the grabbed row lifts and follows the pointer, and the other
+  // rows spring aside to show where it will land. Only the release sends space.move / tab.move;
+  // the preview stays until the new order arrives, then rows remount in place (gen) so nothing jumps.
+  heightOf(kind, id) {
+    return kind === "tab" ? ROW : this.heights[id] ?? ROW;
+  }
+
+  // Where the grabbed row would land among its siblings, from how far it has moved.
+  targetFor(d) {
+    const ids = d.siblings;
+    const from = ids.indexOf(d.id);
+    if (from < 0) return 0;
+    let top = 0;
+    for (let i = 0; i < from; i++) top += this.heightOf(d.kind, ids[i]);
+    const center = top + d.dy + this.heightOf(d.kind, d.id) / 2;
+    let y = 0;
+    let target = 0;
+    for (const id of ids) {
+      if (id === d.id) continue;
+      const h = this.heightOf(d.kind, id);
+      if (y + h / 2 < center) target++;
+      y += h;
+    }
+    return target;
+  }
+
+  // Each sibling's vertical offset for an order: new top minus original top.
+  offsetsFor(kind, ids, order) {
+    const orig = {};
+    let y = 0;
+    for (const id of ids) { orig[id] = y; y += this.heightOf(kind, id); }
+    const out = {};
+    y = 0;
+    for (const id of order) { out[id] = y - (orig[id] ?? y); y += this.heightOf(kind, id); }
+    return out;
+  }
+
+  previewOrder(d) {
+    const others = d.siblings.filter((id) => id !== d.id);
+    others.splice(d.target ?? d.siblings.indexOf(d.id), 0, d.id);
+    return others;
+  }
+
+  // The offset this row shows right now (0 when nothing is being dragged in its list).
+  offsetOf(kind, scope, id) {
+    const d = this.drag;
+    if (d?.active && d.kind === kind && d.scope === scope) {
+      if (id === d.id) return d.dy;
+      return this.offsetsFor(kind, d.siblings, this.previewOrder(d))[id] ?? 0;
+    }
+    const p = this.pending;
+    if (p && p.kind === kind && p.scope === scope) return p.offsets[id] ?? 0;
+    return 0;
+  }
+
+  commitDrag(cx) {
+    const d = this.drag;
+    this.endDrag();
+    const order = this.previewOrder(d);
+    const from = d.siblings.indexOf(d.id);
+    const target = order.indexOf(d.id);
+    if (target === from) return; // springs back into its own slot
+    // Hold the landing layout (the grabbed row snaps into its slot) until the data catches up.
+    this.pending = { kind: d.kind, scope: d.scope, order, offsets: this.offsetsFor(d.kind, d.siblings, order) };
+    if (d.kind === "space") {
+      const base = spaces().findIndex((x) => x.id === d.siblings[0]);
+      run("space.move", { id: d.id, index: base + target + 1 });
+    } else {
+      run("tab.move", { id: d.id, index: target + 1 });
+    }
+    cx.timer.after(1200, (cx) => {
+      if (!this.pending) return;
+      this.pending = null;
+      this.gen++;
+      cx.notify();
+    });
+  }
+
+  // The new order arrived: drop the preview and remount rows where they now are.
+  settlePending() {
+    const p = this.pending;
+    if (!p) return;
+    const now = p.kind === "space"
+      ? spaces().filter((x) => (x.machine ?? "") === p.scope).map((x) => x.id)
+      : (spaces().find((x) => x.id === p.scope)?.tabs ?? []).filter((tb) => p.order.includes(tb.id)).map((tb) => tb.id);
+    if (now.join() !== p.order.join()) return;
+    this.pending = null;
+    this.gen++;
+  }
+
+  // Lift style and press/click/menu handling. `offset: false` when the caller moves a wrapper instead.
+  draggable(el, t, { kind, id, scope, siblings, onClick, onDouble, onMenu, offset = true }) {
+    const lifted = this.drag?.active && this.drag.id === id;
+    let row = el
+      .border_1()
+      .border_color(lifted ? t.accent : "#00000000")
+      .when(lifted, (r) => r.bg(t.raised).shadow_md())
+      .on_mouse_down("left", (e) => {
+        if (this.edit) return;
+        this.drag = { kind, id, scope, siblings, start: e.position, active: false, dy: 0, target: siblings.indexOf(id) };
+      })
+      .on_mouse_up("left", (e, cx) => {
+        const d = this.drag;
+        if (d?.active) return; // the sidebar commits the drop
+        this.endDrag();
+        cx.stop_propagation();
+        if (d?.id === id) {
+          if (e.click_count >= 2 && onDouble) onDouble(cx);
+          else onClick(cx);
+        }
+        cx.notify();
+      })
+      .on_mouse_down("right", (e, cx) => {
+        cx.stop_propagation();
+        onMenu(e.position);
+      });
+    return offset ? this.slide(row, kind, scope, id) : row;
+  }
+
+  // Moves a row (or a folder's whole group) by its live offset, springing between positions.
+  slide(el, kind, scope, id) {
+    const lifted = this.drag?.active && this.drag.id === id;
+    const sp = spring(lifted ? "snappy" : "smooth");
+    let out = el.relative().top(this.offsetOf(kind, scope, id) + (lifted ? -2 : 0));
+    if (sp) out = out.spring("top", sp);
+    return out;
+  }
+
+  // ── agents ─────────────────────────────────────────────────────────────────
+  agentsSection(t, list) {
+    const sorted = [...list].sort(
+      (a, b) => Number(b.pinned) - Number(a.pinned) || (RANK[b.status] ?? 0) - (RANK[a.status] ?? 0) || b.seq - a.seq,
+    );
+    setAgentOrder(sorted.map((a) => a.address));
+    const body = sorted.length
+      ? sorted.flatMap((a) => [this.agentRow(t, a), ...this.subAgentRows(t, a.address, 1)])
+      : [div().px(10).py(4).text_size(11).text_color(t.dim).child("Agents you start show up here.")];
+    return v_flex().child(sectionTitle(t, "Agents", list.length || null)).children(body);
+  }
+
+  agentRow(t, a) {
+    const name = clean(a.title) || a.program?.name || "agent";
+    const sub = `${a.space_name} · ${a.tab_name}`;
+    return h_flex()
+      .id(`hmux-agent-${a.address}`)
+      .mx(4)
+      .px(6)
+      .h(34)
+      .gap(7)
+      .items_center()
+      .rounded(5)
+      .when(a.focused, (el) => el.bg(t.selected))
+      .hover((s) => s.bg(a.focused ? t.selected : t.hover))
+      .on_click(() => run("agent.focus", { terminal: a.address }))
+      .on_mouse_down("right", (e, cx) => {
+        cx.stop_propagation();
+        openMenu({ kind: "agent", id: a.address }, e.position);
+      })
+      .child(programIcon(a.program, 14, t.muted) ?? div().size(14).flex_none())
+      .child(
+        v_flex()
+          .flex_1()
+          .min_w(0)
+          .child(h_flex().gap(4).items_center().min_w(0)
+            .when(a.pinned, (el) => el.child(svg(ICON.pin).size(10).flex_none().text_color(t.accent)))
+            .child(div().flex_1().min_w(0).truncate().text_color(a.focused ? t.foreground : t.muted).child(name)))
+          .child(div().truncate().text_size(10.5).text_color(t.dim).child(sub)),
+      )
+      .when(a.status === "blocked", (el) =>
+        el.child(div().flex_none().px(5).h(16).flex().items_center().rounded(4).bg(t.blocked + "26").text_size(10).font_semibold().text_color(t.blocked).child(STATUS_LABEL.blocked)),
+      )
+      .when(a.status !== "blocked", (el) => el.child(statusMark(t, a.status) ?? div()));
+  }
+
+  // Sub-agents under their parent, indented by depth (at most 3 deep).
+  subAgentRows(t, parent, depth) {
+    if (depth > 3) return [];
+    return subAgentsOf(parent).flatMap((k) => {
+      const st = subStatus(k.status);
+      const name = clean(k.name) || clean(k.report?.title) || k.program?.name || (k.argv ?? [])[0] || k.address;
+      const row = h_flex()
+        .id(`hmux-sub-${k.address}`)
+        .mx(4)
+        .pl(6 + depth * 14)
+        .pr(6)
+        .h(24)
+        .gap(6)
+        .items_center()
+        .rounded(5)
+        .hover((s) => s.bg(t.hover))
+        .on_click(() => run("agent.focus", { terminal: k.address }))
+        .on_mouse_down("right", (e, cx) => {
+          cx.stop_propagation();
+          openMenu({ kind: "agent", id: k.address, sub: true }, e.position);
+        })
+        .child(div().w(8).h(12).flex_none().border_l(1).border_b(1).border_color(t.input))
+        .child(programIcon(k.program, 12, t.dim) ?? div().size(12).flex_none())
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(name))
+        .child(statusMark(t, st, 9) ?? div());
+      return [row, ...this.subAgentRows(t, k.address, depth + 1)];
+    });
+  }
+
+  // ── folders and sessions ───────────────────────────────────────────────────
+  // This computer's spaces only; SSH machines live in the session section.
+  tabsSection(t) {
+    const local = spaces().filter((s) => !s.machine);
+    const add = iconButton(t, "hmux-tabs-new", ICON.plus, () => run("tab.new", {}), 11);
+    return v_flex()
+      .pt(4)
+      .child(sectionTitle(t, "Tabs", null, add))
+      .children(local.map((s) => this.spaceGroup(t, s)));
+  }
+
+  // A folder row: click folds or unfolds it (never switches), double-click renames it,
+  // right-click opens its menu, drag reorders it within its machine.
+  spaceGroup(t, s) {
+    const open = this.expanded.has(s.id);
+    const siblings = spaces().filter((x) => (x.machine ?? null) === (s.machine ?? null)).map((x) => x.id);
+    // The whole group (folder row and its sessions) moves while dragging; its height feeds the preview.
+    const wrap = (inner) =>
+      this.slide(
+        v_flex()
+          .id(`hmux-space-wrap-${s.id}-${this.gen}`)
+          .on_size_change((size) => { this.heights[s.id] = size.height; })
+          .child(inner),
+        "space",
+        s.machine ?? "",
+        s.id,
+      ).when(this.drag?.active && this.drag.id === s.id, (el) => el.bg(t.raised).rounded(6).shadow_md());
+    const editing = this.editor(t, "space", s.id);
+    let head = h_flex()
+      .id(`hmux-space-${s.id}-${this.gen}`)
+      .mx(4)
+      .pl(2)
+      .pr(6)
+      .h(ROW)
+      .gap(5)
+      .items_center()
+      .rounded(5)
+      .bg(t.foreground + "0d") // a light shade sets folders apart from their sessions
+      .hover((st) => st.bg(t.hover))
+      .child(svg(open ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim))
+      .child(div().size(6).flex_none().rounded(2).bg(s.active ? t.accent : t.input))
+      .when(Boolean(editing), (el) => el.child(editing))
+      .when(!editing, (el) => el.child(div().flex_1().min_w(0).truncate().font_semibold().text_color(s.active ? t.foreground : t.muted).child(s.name)))
+      .when(Boolean(s.branch) && !editing, (el) =>
+        el.child(h_flex().flex_none().max_w(90).gap(3).items_center().text_size(10.5).text_color(t.dim)
+          .child(svg(ICON.branch).size(10).flex_none())
+          .child(div().truncate().child(s.branch))),
+      )
+      .when(!open && !editing, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(`${s.tabs.length}`)))
+      .when(Boolean(statusMark(t, s.status)) && !open, (el) => el.child(statusMark(t, s.status)));
+    head = this.draggable(head, t, {
+      kind: "space",
+      id: s.id,
+      scope: s.machine ?? "",
+      siblings,
+      offset: false,
+      onClick: () => this.toggleExpanded(s.id),
+      // The first click of a double-click already folded it: undo that, then rename.
+      onDouble: (cx) => {
+        this.toggleExpanded(s.id);
+        this.startEdit("space", s.id, cx);
+      },
+      onMenu: (at) => openMenu({ kind: "space", id: s.id }, at),
+    });
+    if (!open) return wrap(head);
+
+    // Unfolded: its sessions. Clicking one goes there. In the shown space a highlight springs between rows.
+    const tabs = s.tabs.filter((tb) => !tb.settled || tb.active);
+    const tabIds = tabs.map((tb) => tb.id);
+    const rows = tabs.map((tb) => this.tabRow(t, s, tb, tabIds));
+    if (!s.active) return wrap(v_flex().child(head).child(div().pl(6).child(v_flex().children(rows))));
+
+    const idx = Math.max(0, tabs.findIndex((tb) => tb.active));
+    const activeId = tabs[idx]?.id;
+    const sp = spring("smooth");
+    let highlight = div()
+      .id(`hmux-tab-hl-${s.id}-${this.gen}`)
+      .absolute()
+      .left(4)
+      .right(4)
+      .h(ROW)
+      .top(idx * ROW + (activeId ? this.offsetOf("tab", s.id, activeId) : 0))
+      .rounded(5)
+      .bg(t.selected)
+      .border_l(2)
+      .border_color(t.accent);
+    if (sp) highlight = highlight.spring("top", sp);
+    return wrap(v_flex()
+      .child(head)
+      .child(div().relative().pl(6).child(highlight).child(v_flex().children(rows))));
+  }
+
+  // Unnamed sessions are called by their index: use the agent's title.
+  tabLabel(tb) {
+    if (tb.named) return tb.name;
+    const lead = agents().find((a) => a.tab === tb.id);
+    return clean(lead?.title) || lead?.program?.name || `Command ${tb.index}`;
+  }
+
+  // A session row: working time in front (how long its agent has been working, else since it last changed).
+  tabRow(t, s, tb, siblings) {
+    const here = tb.active && s.active;
+    const splits = tb.panes > 1 ? `${tb.panes} splits` : "";
+    const label = this.tabLabel(tb);
+    const working = Boolean(tb.working_since);
+    const time = elapsed(tb.working_since ?? tb.changed_at);
+    const editing = this.editor(t, "tab", tb.id);
+    const go = () => {
+      if (!s.active) run("space.select", { id: s.id });
+      run("tab.select", { id: tb.id });
+    };
+    const row = h_flex()
+      .id(`hmux-tab-${tb.id}-${this.gen}`)
+      .h(ROW)
+      .mx(4)
+      .pl(4)
+      .pr(6)
+      .gap(3)
+      .items_center()
+      .rounded(5)
+      .when(!here, (el) => el.hover((st) => st.bg(t.hover)))
+      .child(div().flex_none().w(22).text_size(10).text_color(working ? t.working : t.dim).truncate().child(time))
+      .when(Boolean(editing), (el) => el.child(editing))
+      .when(!editing, (el) => el.child(div().flex_1().min_w(0).truncate().text_color(here ? t.foreground : t.muted).child(label)))
+      .when(Boolean(splits) && !editing, (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(splits)))
+      .when(tb.zoomed, (el) => el.child(svg(ICON.zoom).size(10).flex_none().text_color(t.dim)))
+      .child(statusMark(t, tb.status, 9) ?? div());
+    return this.draggable(row, t, {
+      kind: "tab",
+      id: tb.id,
+      scope: s.id,
+      siblings,
+      onClick: go,
+      onDouble: (cx) => this.startEdit("tab", tb.id, cx),
+      onMenu: (at) => openMenu({ kind: "tab", id: tb.id }, at),
+    });
+  }
+
+  // SSH machines: "This Mac + N" folds open into each machine, its spaces and their sessions.
+  machinesBlock(t) {
+    const others = machines().filter((m) => m.name);
+    if (!others.length) return div().truncate().child("This Mac");
+    const offline = others.filter((m) => m.layout === "unavailable").length;
+    const open = this.expanded.has("m:*");
+    const header = h_flex()
+      .id("hmux-machines")
+      .gap(4)
+      .items_center()
+      .rounded(4)
+      .hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => {
+        this.toggleExpanded("m:*");
+        cx.notify();
+      })
+      .child(svg(open ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none())
+      .child(div().flex_1().min_w(0).truncate().child(`This Mac + ${others.length} ${others.length === 1 ? "machine" : "machines"}${offline ? ` · ${offline} offline` : ""}`));
+    if (!open) return header;
+    const tone = { ready: t.done, loading: t.working, unavailable: t.idle };
+    const word = { ready: "Connected", loading: "Connecting", unavailable: "Offline" };
+    const groups = others.map((m) => {
+      const key = `m:${m.name}`;
+      const mOpen = this.expanded.has(key);
+      const own = spaces().filter((s) => s.machine === m.name);
+      const row = h_flex()
+        .id(`hmux-machine-${m.name}`)
+        .h(ROW)
+        .pl(8)
+        .pr(4)
+        .gap(5)
+        .items_center()
+        .rounded(5)
+        .text_size(11.5)
+        .hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => {
+          this.toggleExpanded(key);
+          cx.notify();
+        })
+        .child(svg(mOpen ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim))
+        .child(svg(ICON.server).size(11).flex_none().text_color(t.muted))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(m.name))
+        .child(div().size(6).flex_none().rounded(3).bg(tone[m.layout] ?? t.idle))
+        .child(div().flex_none().text_size(10).text_color(t.dim).child(word[m.layout] ?? ""));
+      if (!mOpen) return row;
+      const body = own.length
+        ? own.map((s) => this.spaceGroup(t, s))
+        : [div().pl(26).py(2).text_size(10.5).text_color(t.dim).child("No spaces on this machine yet.")];
+      return v_flex().child(row).child(v_flex().pl(6).children(body));
+    });
+    return v_flex()
+      .child(header)
+      .child(v_flex().id("hmux-machines-list").max_h(220).overflow_y_scrollbar().pt(2).children(groups));
+  }
+
+  sessionSection(t, list) {
+    const count = (st) => list.filter((a) => a.status === st).length;
+    const chips = ["blocked", "working", "done"]
+      .map((st) => [st, count(st)])
+      .filter(([, n]) => n > 0)
+      .map(([st, n]) =>
+        h_flex().flex_none().gap(4).items_center().text_size(10.5).text_color(t.muted)
+          .child(div().size(6).rounded(3).bg(t[st]))
+          .child(div().child(`${STATUS_LABEL[st]} ${n}`)),
+      );
+    const f = focused();
+    const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
+    const cwd = shortPath(pane?.cwd ?? f?.cwd);
+    const space = spaces().find((s) => s.active);
+    const tabCount = spaces().reduce((n, s) => n + s.tabs.length, 0);
+
+    return v_flex()
+      .id("hmux-session")
+      .flex_none()
+      .px(10)
+      .pt(6)
+      .pb(8)
+      .gap(3)
+      .border_t(1)
+      .border_color(t.border)
+      .text_size(10.5)
+      .text_color(t.dim)
+      .child(
+        h_flex().gap(6).items_center()
+          .child(div().font_semibold().child("Session"))
+          .child(div().flex_1())
+          .child(div().child(`${spaces().length} spaces · ${tabCount} tabs`)),
+      )
+      .child(
+        chips.length
+          ? h_flex().gap(10).flex_wrap().children(chips)
+          : div().text_color(t.dim).child(list.length ? "All agents are idle." : "No agents running."),
+      )
+      .when(Boolean(cwd), (el) =>
+        el.child(h_flex().gap(4).items_center().min_w(0)
+          .child(svg(ICON.folder).size(10).flex_none())
+          .child(div().flex_1().min_w(0).truncate().child(cwd))),
+      )
+      .when(Boolean(pane?.branch ?? space?.branch), (el) =>
+        el.child(h_flex().gap(4).items_center().min_w(0)
+          .child(svg(ICON.branch).size(10).flex_none())
+          .child(div().flex_1().min_w(0).truncate().child(pane?.branch ?? space?.branch))),
+      )
+      .child(this.machinesBlock(t));
+  }
+
+  // ── pane header ────────────────────────────────────────────────────────────
+  renderPane() {
+    const t = theme();
+    const p = panes().find((x) => x.pane === props()?.pane);
+    if (!p) return div();
+    const pane = p.pane;
+    const name = ((p.program?.agent || p.program?.shell) && p.program.name) || clean(p.title) || p.program?.name || "shell";
+    const pic = programIcon(p.program, 11, p.focused ? t.muted : t.dim);
+    const fade = transition("fast", "out", { opacityOnly: true });
+    return h_flex()
+      .id(`hmux-pane-${pane}`)
+      .size_full()
+      .px(8)
+      .gap(6)
+      .items_center()
+      .bg(p.focused ? t.chrome : t.background)
+      .border_b(1)
+      .border_color(t.border)
+      .text_size(11)
+      .on_hover((hovered, cx) => {
+        this.hovered = hovered;
+        cx.notify();
+      })
+      .on_click(() => run("pane.focus", { pane }))
+      .when(Boolean(pic), (el) => el.child(pic))
+      .child(div().flex_none().max_w(220).truncate().font_medium().text_color(p.focused ? t.foreground : t.muted).child(name))
+      .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(shortPath(p.cwd)))
+      .when(p.status === "blocked", (el) => el.child(div().flex_none().text_size(10).font_semibold().text_color(t.blocked).child(STATUS_LABEL.blocked)))
+      .child(statusMark(t, p.status, 9) ?? div())
+      .child(
+        h_flex()
+          .id(`hmux-pane-tools-${pane}`)
+          .flex_none()
+          .gap(1)
+          .opacity(this.hovered ? 1 : 0)
+          .transition("opacity", fade)
+          .child(iconButton(t, `hmux-pr-${pane}`, ICON.splitRight, () => run("pane.split", { direction: "right", pane }), 11))
+          .child(iconButton(t, `hmux-pd-${pane}`, ICON.splitDown, () => run("pane.split", { direction: "down", pane }), 11))
+          .child(iconButton(t, `hmux-pz-${pane}`, p.zoomed ? ICON.unzoom : ICON.zoom, () => run("pane.zoom", { pane }), 11))
+          .child(iconButton(t, `hmux-px-${pane}`, ICON.close, () => run("pane.close", { pane }), 11)),
+      );
+  }
+}
