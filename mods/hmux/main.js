@@ -899,7 +899,11 @@ export default class Hmux extends View {
     const ask = shared(RENAME_KEY);
     if (ask && ask.at > this.renameSeen) {
       this.renameSeen = ask.at;
-      this.startEdit(ask.kind, ask.id, cx);
+      // InputState must not be created during render: start it from a timer.
+      cx.timer.after(10, (cx) => {
+        this.startEdit(ask.kind, ask.id, cx);
+        cx.notify();
+      });
     }
     this.settlePending(cx);
     return v_flex()
