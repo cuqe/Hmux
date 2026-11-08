@@ -102,10 +102,13 @@ session's folder is in the title bar, like cmux.
 
 **Moving a pane.** The layout root sets `"movable": false`, so the app's centre
 grip no longer drags panes. Instead, press a pane's tab (anywhere but its
-buttons): it records `{pane}` in the shared `hmux.paneDrag`, lifts with a
-shadow, and releasing it on another pane's tab calls `pane.focus` on the
-dragged pane, then `pane.swap` left or right (by tab order) — it lands beside
-the tab it was dropped on. Right-click a tab for Focus, Move left/right/up/down
+buttons): once the pointer travels 4px, a **floating copy of the tab** (the
+`tabdrag` role in a borderless, shadowed window, key `hmux-tabdrag`) follows the
+pointer just beside it, and the tab under the pointer shows a 2px accent line on
+the side where the drop will land (`hmux.paneDrop`). Releasing over another tab
+closes the floating copy and calls `pane.focus` on the dragged pane, then
+`pane.swap` left or right (by tab order) — it lands beside the tab it was
+dropped on. Right-click a tab for Focus, Move left/right/up/down
 (`pane.focus` + `pane.swap`) and Close pane. A drag left hanging is cleared by
 the next press.
 
@@ -232,18 +235,18 @@ Reduce Motion. Elapsed labels refresh every 30s; nothing else polls.
     header {content: {mod: "hmux", props: {role: "pane"}}, height: 30,
     position: "top", reveal: "always"}}}`.
 
-**`mods/hmux`** — one View class with seven roles read from
-`props().role`: `top`, `sidebar` (default), `pane`, `inbox`, `menu`, `confirm`,
-`fade`. It imports `View, div, svg, image` from `gpui-kit`, `v_flex, h_flex,
+**`mods/hmux`** — one View class with eight roles read from
+`props().role`: `top`, `tabdrag`, `sidebar` (default), `pane`, `inbox`, `menu`,
+`confirm`, `fade`. It imports `View, div, svg, image` from `gpui-kit`, `v_flex, h_flex,
 InputState, Input` from `gpui-base`, and from `herdr`: `agents, spaces, panes,
 focused, machines, terminals, props, run, theme, settings, appHome,
 readTextFile, writeTextFile, notify, shared, setShared, openOverlay,
 closeOverlay, exec`. `motion.js` holds the tokens and the Reduce Motion read.
 
 State: `hmux.groups` (`[{id, name}]`), `hmux.groupOf` (`{tabId: groupId}`),
-`hmux.order` (`{u: [tabId…], <groupId>: [tabId…]}`), `hmux.paneDrag` (`{pane}`),
-`hmux.sidebarW` (the sidebar's measured width), `hmux.inbox`, `hmux.inboxSeen`,
-`hmux.rename` (shared) and `expanded` (localStorage: which groups, spaces and
+`hmux.order` (`{u: [tabId…], <groupId>: [tabId…]}`), `hmux.paneDrag` (`{pane, ov}`),
+`hmux.paneDrop` (`{pane}`), `hmux.sidebarW` (the sidebar's measured width),
+`hmux.inbox`, `hmux.inboxSeen`, `hmux.rename` (shared) and `expanded` (localStorage: which groups, spaces and
 machines are folded). Constants: `ROW = 22` (header rows), `SESSION_H = 58`
 (session rows), `DRAG_START = 4`, inbox 320×380 (header 44), menu 200×300,
 confirm 360×170.

@@ -46,9 +46,10 @@ session menu uses Finder and `pbcopy`).
     and Delete (deleting a group keeps its sessions, ungrouped).
 - **Pane tabs:** each pane carries its own cmux-style tab bar — terminal glyph,
   title, ×, then split and zoom tools; the focused tab is white with a thin
-  accent line on top. Drag a tab by its title and drop it on another tab to
-  move beside it (the old centre grip is off); right-click a tab for Move
-  left/right/up/down and Close.
+  accent line on top. Drag a tab and a floating copy follows the pointer; the
+  tab under it shows where it will land. Drop it on another tab to move beside
+  it (the old centre grip is off); right-click a tab for Move left/right/up/down
+  and Close.
 - **Session footer:** status counts, the focused pane's folder and branch, and
   `This Mac + N` — each SSH machine with its connection state. Click an offline
   machine to open its login prompt (type the password or code right there; that

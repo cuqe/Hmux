@@ -27,7 +27,8 @@ const GROUPS_KEY = "hmux.groups"; // [{ id, name }]
 const ASSIGN_KEY = "hmux.groupOf"; // { [tabId]: groupId }
 const ORDER_KEY = "hmux.order"; // { u: [tabId…], <groupId>: [tabId…] }
 const UNGROUPED = "u";
-const PANE_DRAG = "hmux.paneDrag"; // { pane } while a pane tab is dragged
+const PANE_DRAG = "hmux.paneDrag"; // { pane, ov } while a pane tab is dragged
+const PANE_DROP = "hmux.paneDrop"; // { pane } under the pointer during that drag
 const SIDEBAR_W = "hmux.sidebarW"; // the sidebar's live width (measured, layout px)
 const INBOX_MAX = 60;
 const INBOX_W = 320;
@@ -336,6 +337,7 @@ export default class Hmux extends View {
   render(cx) {
     const role = props()?.role ?? "sidebar";
     if (role === "top") return this.renderTop();
+    if (role === "tabdrag") return this.renderTabDrag();
     if (role === "fade") return this.renderFade();
     if (role === "pane") return this.renderPane();
     if (role === "inbox") return this.renderInbox();
@@ -1550,8 +1552,24 @@ export default class Hmux extends View {
       .child(this.machinesBlock(t));
   }
 
-  // ── pane header: one cmux-style tab ────────────────────────────────────────
-  // Terminal glyph, title, ×, then the pane tools; the focused pane is the page
+  // The floating tab that follows the pointer while a pane tab is dragged.
+  renderTabDrag() {
+    const t = theme();
+    return h_flex()
+      .size_full()
+      .px(10)
+      .gap(6)
+      .items_center()
+      .rounded(7)
+      .bg(t.popover)
+      .border_1()
+      .border_color(t.border)
+      .shadow_lg()
+      .child(svg(ICON.terminal).size(12).flex_none().text_color(t.foreground))
+      .child(div().truncate().text_size(12).font_medium().text_color(t.foreground).child(props()?.name ?? "terminal"));
+  }
+
+  // ── pane header: one cmux-style tab ────────────────────────────────────────  // Terminal glyph, title, ×, then the pane tools; the focused pane is the page
   // color with a 2px accent line along its top.
   renderPane() {
     const t = theme();
@@ -1559,7 +1577,12 @@ export default class Hmux extends View {
     if (!p) return div();
     const pane = p.pane;
     const name = ((p.program?.agent || p.program?.shell) && p.program.name) || clean(p.title) || p.program?.name || "shell";
-    const dragging = shared(PANE_DRAG)?.pane === pane;
+    const drag = shared(PANE_DRAG);
+    const dragging = drag?.pane === pane;
+    const drop = shared(PANE_DROP);
+    const dropHere = Boolean(drop?.pane === pane && drag && drag.pane !== pane);
+    const list = panes().map((x) => x.pane);
+    const dropBefore = dropHere && list.indexOf(drag.pane) > list.indexOf(pane);
     const close = div()
       .id(`hmux-pane-x-${pane}`)
       .flex_none()
@@ -1583,22 +1606,57 @@ export default class Hmux extends View {
       .border_b(1)
       .border_color(t.border)
       .text_size(11)
+      // Drag by the tab itself: a floating tab follows the pointer and the tab
+      // under it shows where the drop will land. Releasing moves it beside.
       .when(dragging, (el) => el.bg(t.hover).shadow_md())
-      // Drag by the tab itself: drop it on another pane's tab to move beside it.
-      .on_mouse_down("left", (_e, cx) => {
+      .when(dropHere, (el) => (dropBefore ? el.border_l(2).border_color(t.accent) : el.border_r(2).border_color(t.accent)))
+      .on_mouse_down("left", (e, cx) => {
         cx.stop_propagation();
-        setShared(PANE_DRAG, { pane, at: Date.now() });
+        const prev = shared(PANE_DRAG);
+        if (prev?.ov) closeOverlay(prev.ov); // a drag that ended outside the tabs
+        this.tabDrag = { x: e.position.x, y: e.position.y, active: false };
+        setShared(PANE_DRAG, { pane, ov: null });
+      })
+      .on_mouse_move((e, cx) => {
+        const d = this.tabDrag;
+        if (!d) return;
+        const dx = e.position.x - d.x;
+        const dy = e.position.y - d.y;
+        if (!d.active && Math.hypot(dx, dy) < 4) return;
+        d.active = true;
+        const ov = openOverlay({
+          mod: "hmux",
+          props: { role: "tabdrag", name },
+          kind: "window",
+          key: "hmux-tabdrag",
+          frame: "none",
+          width: 190,
+          height: 30,
+          at: { x: e.position.x + 14, y: e.position.y + 10 },
+        });
+        setShared(PANE_DRAG, { pane, ov });
+        cx.notify();
+      })
+      .on_hover((hovered, cx) => {
+        if (!shared(PANE_DRAG)) return;
+        const cur = shared(PANE_DROP)?.pane;
+        if (hovered && cur !== pane) setShared(PANE_DROP, { pane });
+        else if (!hovered && cur === pane) setShared(PANE_DROP, null);
       })
       .on_mouse_up("left", (_e, cx) => {
-        const d = shared(PANE_DRAG);
+        this.tabDrag = null;
+        const src = shared(PANE_DRAG);
+        const target = shared(PANE_DROP)?.pane;
         setShared(PANE_DRAG, null);
-        if (!d || d.pane === pane) return;
+        setShared(PANE_DROP, null);
+        if (src?.ov) closeOverlay(src.ov);
+        if (!src || !target || src.pane === target) return;
         cx.stop_propagation();
-        const list = panes().map((x) => x.pane);
-        const from = list.indexOf(d.pane);
-        const to = list.indexOf(pane);
+        const order = panes().map((x) => x.pane);
+        const from = order.indexOf(src.pane);
+        const to = order.indexOf(target);
         if (from < 0 || to < 0 || from === to) return;
-        run("pane.focus", { pane: d.pane });
+        run("pane.focus", { pane: src.pane });
         run("pane.swap", { direction: to < from ? "left" : "right" });
       })
       .on_mouse_down("right", (e, cx) => {
