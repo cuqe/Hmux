@@ -671,30 +671,39 @@ export default class Hmux extends View {
                     .child(
                       h_flex().gap(8).items_center().min_w(0)
                         .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().child(n.title))
-                        .when(hovered, (el) =>
-                          el.child(
-                            div()
-                              .id(`hmux-inbox-x-${n.id}`)
-                              .flex_none()
-                              .size(16)
-                              .rounded(8)
-                              .flex()
-                              .items_center()
-                              .justify_center()
-                              .bg(t.foreground + "14")
-                              .hover((s) => s.bg(t.foreground + "26"))
-                              .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-                              .on_click((_e, cx) => {
-                                cx.stop_propagation();
-                                setShared(INBOX_KEY, inbox().filter((x) => x.id !== n.id));
-                              })
-                              .child(svg(ICON.close).size(9).flex_none().text_color(t.muted)),
-                          ),
-                        )
                         .child(div().flex_none().text_size(11).text_color(t.dim).child(clock(n.at))),
                     )
                     .child(div().truncate().text_size(11).text_color(t.dim).child(alive ? n.where : `${n.where} · ended`))
                     .child(div().text_size(11).text_color(t.dim).child(INBOX_TEXT[n.status] ?? "")),
+                )
+                // The × floats at the right edge, below the time, on hover.
+                .when(hovered, (el) =>
+                  el.child(
+                    div()
+                      .absolute()
+                      .right(6)
+                      .top(0)
+                      .bottom(0)
+                      .flex()
+                      .items_center()
+                      .child(
+                        div()
+                          .id(`hmux-inbox-x-${n.id}`)
+                          .size(16)
+                          .rounded(8)
+                          .flex()
+                          .items_center()
+                          .justify_center()
+                          .bg(t.foreground + "14")
+                          .hover((s) => s.bg(t.foreground + "26"))
+                          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+                          .on_click((_e, cx) => {
+                            cx.stop_propagation();
+                            setShared(INBOX_KEY, inbox().filter((x) => x.id !== n.id));
+                          })
+                          .child(svg(ICON.close).size(9).flex_none().text_color(t.muted)),
+                      ),
+                  ),
                 );
             }),
           )
