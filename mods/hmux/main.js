@@ -15,11 +15,18 @@ import {
 } from "herdr";
 import { detectReducedMotion, isReduced, transition, spring, loopMs, durationMs, fadeDelay, fadeTotalMs } from "./motion.js";
 
-const ROW = 22; // session row height: the selection highlight springs by this step
+const ROW = 22; // header/folder row height: their lists spring by this step
+const SESSION_H = 58; // a session row: name on top, folder below (the highlight springs by this)
 const THEME = { light: "hmux-white", dark: "hmux-black" };
 const INBOX_KEY = "hmux.inbox";
 const INBOX_SEEN = "hmux.inboxSeen";
 const RENAME_KEY = "hmux.rename"; // menu → sidebar: start editing a name
+// Groups are this mod's own collections (display only): sessions are Herdr tabs,
+// grouped by these ids, never by their Herdr space. "u" holds the loose sessions.
+const GROUPS_KEY = "hmux.groups"; // [{ id, name }]
+const ASSIGN_KEY = "hmux.groupOf"; // { [tabId]: groupId }
+const ORDER_KEY = "hmux.order"; // { u: [tabId…], <groupId>: [tabId…] }
+const UNGROUPED = "u";
 const INBOX_MAX = 60;
 const INBOX_W = 320;
 const INBOX_H = 380;
@@ -43,6 +50,7 @@ const ICON = {
   bell: "mods/hmux/bell.svg",
   sidebar: "mods/hmux/sidebar.svg",
   server: "mods/hmux/server.svg",
+  folderPlus: "mods/hmux/folder-plus.svg",
 };
 const STATUS_LABEL = { working: "Working", blocked: "Needs you", done: "Done", idle: "Idle" };
 const INBOX_TEXT = { blocked: "Needs your input.", done: "Finished its work." };
@@ -100,16 +108,17 @@ function programIcon(p, size, color) {
   return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
 }
 
-// Status mark: spinner while working (a static dot under reduced motion).
-function statusMark(t, status, size = 10) {
+// Status mark: spinner while working (a static dot under reduced motion). White on an accent row.
+function statusMark(t, status, size = 10, onAccent = false) {
+  const ink = onAccent ? t.accent_foreground : null;
   if (status === "working") {
     return isReduced()
-      ? div().size(6).flex_none().rounded(3).bg(t.working)
-      : svg(ICON.spinner).size(size).flex_none().text_color(t.working).spin(loopMs("spinner"));
+      ? div().size(6).flex_none().rounded(3).bg(ink ?? t.working)
+      : svg(ICON.spinner).size(size).flex_none().text_color(ink ?? t.working).spin(loopMs("spinner"));
   }
-  if (status === "blocked") return div().size(6).flex_none().rounded(3).bg(t.blocked);
-  if (status === "done") return div().size(6).flex_none().rounded(3).bg(t.done);
-  if (status === "idle") return div().size(5).flex_none().rounded(3).bg(t.idle);
+  if (status === "blocked") return div().size(6).flex_none().rounded(3).bg(ink ?? t.blocked);
+  if (status === "done") return div().size(6).flex_none().rounded(3).bg(ink ?? t.done);
+  if (status === "idle") return div().size(5).flex_none().rounded(3).bg(ink ?? t.idle);
   return null;
 }
 
@@ -158,6 +167,52 @@ const unread = () => {
   return inbox().filter((n) => n.at > seen).length;
 };
 
+// ── groups and sessions ─────────────────────────────────────────────────────
+const groups = () => (Array.isArray(shared(GROUPS_KEY)) ? shared(GROUPS_KEY) : []);
+const groupOf = () => {
+  const m = shared(ASSIGN_KEY);
+  return m && typeof m === "object" && !Array.isArray(m) ? m : {};
+};
+const orderOf = () => {
+  const m = shared(ORDER_KEY);
+  return m && typeof m === "object" && !Array.isArray(m) ? m : {};
+};
+const setGroups = (list) => setShared(GROUPS_KEY, list);
+const setOrder = (section, ids) => setShared(ORDER_KEY, { ...orderOf(), [section]: ids });
+
+// Every local session (tab), in Herdr's own order, before grouping.
+function localSessions() {
+  const out = [];
+  for (const s of spaces()) {
+    if (s.machine) continue;
+    for (const tb of s.tabs) if (!tb.settled || tb.active) out.push({ space: s, tab: tb });
+  }
+  return out;
+}
+
+// The sessions of one section (a group id or UNGROUPED), in the user's order.
+function sessionsIn(section) {
+  const gof = groupOf();
+  const list = localSessions();
+  const seen = new Map(list.map((e, i) => [e.tab.id, i]));
+  const rank = new Map((orderOf()[section] ?? []).map((id, i) => [id, i]));
+  return list
+    .filter((e) => (gof[e.tab.id] ?? UNGROUPED) === section)
+    .sort((a, b) => (rank.get(a.tab.id) ?? 1e9) - (rank.get(b.tab.id) ?? 1e9) || seen.get(a.tab.id) - seen.get(b.tab.id));
+}
+
+// Move a session into a group (or out, with UNGROUPED), keeping the order lists tidy.
+function setGroupOf(tabId, section) {
+  const gof = { ...groupOf() };
+  if (section === UNGROUPED) delete gof[tabId];
+  else gof[tabId] = section;
+  const order = {};
+  for (const [key, ids] of Object.entries(orderOf())) order[key] = ids.filter((id) => id !== tabId);
+  order[section] = [...(order[section] ?? []), tabId];
+  setShared(ASSIGN_KEY, gof);
+  setShared(ORDER_KEY, order);
+}
+
 // Sub-agents: live terminals another one started (`hc run`), keyed by their parent's address.
 function subAgentsOf(address) {
   return terminals().filter((x) => x.parent === address && (x.state ?? "live") === "live");
@@ -178,6 +233,7 @@ export default class Hmux extends View {
     this.drag = null; // { kind: "space" | "tab", id, scope, label, start: {x,y}, active }
     this.pending = null; // after a drop: keep the preview until the new order arrives
     this.heights = {}; // measured folder group heights, for the live preview
+    this.dropGroup = null; // group under the pointer while a session drag is active
     this.gen = 0; // bumped after a drop so rows remount in their new places without sliding back
     this.edit = null; // { kind, id, input }
     this.renameSeen = Date.now();
@@ -220,7 +276,7 @@ export default class Hmux extends View {
     const count = unread();
     const space = spaces().find((s) => s.active);
     const tab = space?.tabs.find((tb) => tb.active);
-    const where = space ? `${space.name}${tab ? ` · ${tab.named ? tab.name : `Command ${tab.index}`}` : ""}` : "";
+    const where = space ? `${space.name}${tab ? ` · ${this.tabLabel(tab)}` : ""}` : "";
     const bell = div()
       .relative()
       .flex_none()
@@ -422,6 +478,15 @@ export default class Hmux extends View {
   menuItems() {
     const p = props();
     const all = spaces();
+    if (p.kind === "group") {
+      const g = groups().find((x) => x.id === p.id);
+      if (!g) return [];
+      return [
+        ["Rename group", () => setShared(RENAME_KEY, { kind: "group", id: g.id, at: Date.now() })],
+        null,
+        ["Delete group", () => this.deleteGroup(g.id), true],
+      ];
+    }
     if (p.kind === "tab") {
       const s = all.find((x) => x.tabs.some((tb) => tb.id === p.id));
       const tb = s?.tabs.find((x) => x.id === p.id);
@@ -548,12 +613,6 @@ export default class Hmux extends View {
   renderSidebar(cx) {
     const t = theme();
     const list = agents();
-    // A newly shown space (by click, key or command) unfolds; the others keep their fold.
-    const shown = spaces().find((s) => s.active);
-    if (shown && shown.id !== this.lastShown) {
-      this.lastShown = shown.id;
-      if (!this.expanded.has(shown.id)) this.toggleExpanded(shown.id, true);
-    }
     // "Rename" from a right-click menu.
     const ask = shared(RENAME_KEY);
     if (ask && ask.at > this.renameSeen) {
@@ -599,13 +658,14 @@ export default class Hmux extends View {
           .overflow_y_scrollbar()
           .pb(6)
           .child(this.agentsSection(t, list))
-          .child(this.tabsSection(t)),
+          .child(this.sessionsSection(t)),
       )
       .child(this.sessionSection(t, list));
   }
 
   endDrag() {
     this.drag = null;
+    this.dropGroup = null;
   }
 
   saveExpanded() {
@@ -621,15 +681,22 @@ export default class Hmux extends View {
   }
 
   // ── inline rename ──────────────────────────────────────────────────────────
-  // Folder names are Herdr's labels only (space.rename): the folder on disk keeps its name.
+  // Space names are Herdr's labels only (space.rename): the folder on disk keeps its name.
+  // Group names are the mod's own state.
   startEdit(kind, id, cx) {
-    const all = spaces();
-    const s = kind === "space" ? all.find((x) => x.id === id) : all.find((x) => x.tabs.some((tb) => tb.id === id));
-    const tb = kind === "tab" ? s?.tabs.find((x) => x.id === id) : null;
-    if (!s || (kind === "tab" && !tb)) return;
-    if (kind === "tab" && !this.expanded.has(s.id)) this.toggleExpanded(s.id, true);
+    let shownName;
+    if (kind === "group") {
+      const g = groups().find((x) => x.id === id);
+      if (!g) return;
+      shownName = g.name;
+    } else {
+      const all = spaces();
+      const s = kind === "space" ? all.find((x) => x.id === id) : all.find((x) => x.tabs.some((tb) => tb.id === id));
+      const tb = kind === "tab" ? s?.tabs.find((x) => x.id === id) : null;
+      if (!s || (kind === "tab" && !tb)) return;
+      shownName = kind === "tab" ? this.tabLabel(tb) : s.name;
+    }
     // Starts from the name shown in the list.
-    const shownName = kind === "tab" ? this.tabLabel(tb) : s.name;
     const input = InputState.new({});
     input.set_value(shownName);
     this.edit = { kind, id, input, done: false, original: shownName };
@@ -644,7 +711,10 @@ export default class Hmux extends View {
     e.done = true;
     const name = e.input.value().trim();
     // Unchanged: leave it alone, so an automatic name keeps following its folder or agent.
-    if (!cancel && name !== e.original) run(e.kind === "tab" ? "tab.rename" : "space.rename", { id: e.id, name });
+    if (!cancel && name !== e.original) {
+      if (e.kind === "group") setGroups(groups().map((g) => (g.id === e.id ? { ...g, name } : g)));
+      else run(e.kind === "tab" ? "tab.rename" : "space.rename", { id: e.id, name });
+    }
     this.edit = null;
     cx.notify();
   }
@@ -673,12 +743,12 @@ export default class Hmux extends View {
       .child(Input.new(this.edit.input).w_full().text_size(12).text_color(t.foreground));
   }
 
-  // ── drag (folders and sessions) ────────────────────────────────────────────
+  // ── drag (sessions, and machine folders) ───────────────────────────────────
   // Live reorder: past DRAG_START px the grabbed row lifts and follows the pointer, and the other
-  // rows spring aside to show where it will land. Only the release sends space.move / tab.move;
-  // the preview stays until the new order arrives, then rows remount in place (gen) so nothing jumps.
+  // rows spring aside to show where it will land. Dropping a session on a group header files it
+  // there; any other release saves the order. The preview stays until the rows settle (gen).
   heightOf(kind, id) {
-    return kind === "tab" ? ROW : this.heights[id] ?? ROW;
+    return kind === "tab" ? SESSION_H : this.heights[id] ?? ROW;
   }
 
   // Where the grabbed row would land among its siblings, from how far it has moved.
@@ -731,14 +801,23 @@ export default class Hmux extends View {
 
   commitDrag(cx) {
     const d = this.drag;
+    const drop = this.dropGroup;
     this.endDrag();
+    // A session dropped on a group header (or the header above the loose list) moves there.
+    if (d.mode === "local" && drop != null && drop !== d.section) {
+      setGroupOf(d.id, drop);
+      cx.notify();
+      return;
+    }
     const order = this.previewOrder(d);
     const from = d.siblings.indexOf(d.id);
     const target = order.indexOf(d.id);
     if (target === from) return; // springs back into its own slot
     // Hold the landing layout (the grabbed row snaps into its slot) until the data catches up.
-    this.pending = { kind: d.kind, scope: d.scope, order, offsets: this.offsetsFor(d.kind, d.siblings, order) };
-    if (d.kind === "space") {
+    this.pending = { kind: d.kind, scope: d.section, mode: d.mode, order, offsets: this.offsetsFor(d.kind, d.siblings, order) };
+    if (d.mode === "local") {
+      setOrder(d.section, order);
+    } else if (d.kind === "space") {
       const base = spaces().findIndex((x) => x.id === d.siblings[0]);
       run("space.move", { id: d.id, index: base + target + 1 });
     } else {
@@ -756,16 +835,19 @@ export default class Hmux extends View {
   settlePending() {
     const p = this.pending;
     if (!p) return;
-    const now = p.kind === "space"
-      ? spaces().filter((x) => (x.machine ?? "") === p.scope).map((x) => x.id)
-      : (spaces().find((x) => x.id === p.scope)?.tabs ?? []).filter((tb) => p.order.includes(tb.id)).map((tb) => tb.id);
+    const now = p.mode === "local"
+      ? sessionsIn(p.scope).map((e) => e.tab.id)
+      : p.kind === "space"
+        ? spaces().filter((x) => (x.machine ?? "") === p.scope).map((x) => x.id)
+        : (spaces().find((x) => x.id === p.scope)?.tabs ?? []).filter((tb) => p.order.includes(tb.id)).map((tb) => tb.id);
     if (now.join() !== p.order.join()) return;
     this.pending = null;
     this.gen++;
   }
 
   // Lift style and press/click/menu handling. `offset: false` when the caller moves a wrapper instead.
-  draggable(el, t, { kind, id, scope, siblings, onClick, onDouble, onMenu, offset = true }) {
+  draggable(el, t, { kind, id, scope, section, mode = "machine", siblings, onClick, onDouble, onMenu, offset = true }) {
+    const key = section ?? scope;
     const lifted = this.drag?.active && this.drag.id === id;
     let row = el
       .border_1()
@@ -773,7 +855,7 @@ export default class Hmux extends View {
       .when(lifted, (r) => r.bg(t.raised).shadow_md())
       .on_mouse_down("left", (e) => {
         if (this.edit) return;
-        this.drag = { kind, id, scope, siblings, start: e.position, active: false, dy: 0, target: siblings.indexOf(id) };
+        this.drag = { kind, id, scope: key, section: key, mode, siblings, start: e.position, active: false, dy: 0, target: siblings.indexOf(id) };
       })
       .on_mouse_up("left", (e, cx) => {
         const d = this.drag;
@@ -790,7 +872,7 @@ export default class Hmux extends View {
         cx.stop_propagation();
         onMenu(e.position);
       });
-    return offset ? this.slide(row, kind, scope, id) : row;
+    return offset ? this.slide(row, kind, key, id) : row;
   }
 
   // Moves a row (or a folder's whole group) by its live offset, springing between positions.
@@ -877,15 +959,116 @@ export default class Hmux extends View {
     });
   }
 
-  // ── folders and sessions ───────────────────────────────────────────────────
-  // This computer's spaces only; SSH machines live in the session section.
-  tabsSection(t) {
-    const local = spaces().filter((s) => !s.machine);
-    const add = iconButton(t, "hmux-tabs-new", ICON.plus, () => run("tab.new", {}), 11);
+  // ── groups and sessions ────────────────────────────────────────────────────
+  // Sessions are listed flat, by the mod's own groups, not by Herdr space.
+  // Drag a session onto a group header to file it; drag it back to the header
+  // above the loose list to take it out. + starts a new session with no group.
+  sessionsSection(t) {
+    const addGroup = iconButton(t, "hmux-group-new", ICON.folderPlus, () => this.createGroup(), 11);
+    const addSession = iconButton(t, "hmux-session-new", ICON.plus, () => run("tab.new", {}), 11);
     return v_flex()
       .pt(4)
-      .child(sectionTitle(t, "Tabs", null, add))
-      .children(local.map((s) => this.spaceGroup(t, s)));
+      .child(
+        div()
+          .on_hover((hovered, cx) => {
+            if (!this.drag?.active) return;
+            this.dropGroup = hovered ? UNGROUPED : this.dropGroup === UNGROUPED ? null : this.dropGroup;
+            cx.notify();
+          })
+          .child(sectionTitle(t, "Sessions", null, h_flex().gap(1).child(addGroup).child(addSession))),
+      )
+      .children(groups().map((g) => this.groupBlock(t, g)))
+      .child(this.rowsBlock(t, UNGROUPED));
+  }
+
+  // A group: a header that folds and takes drops, then its sessions.
+  groupBlock(t, g) {
+    const key = `g:${g.id}`;
+    const open = this.expanded.has(key);
+    const entries = sessionsIn(g.id);
+    const editing = this.editor(t, "group", g.id);
+    const hovering = this.drag?.active && this.dropGroup === g.id;
+    const head = h_flex()
+      .id(`hmux-group-${g.id}`)
+      .mx(4)
+      .pl(2)
+      .pr(6)
+      .h(ROW)
+      .gap(5)
+      .items_center()
+      .rounded(5)
+      .bg(t.foreground + "0d")
+      .when(hovering, (el) => el.bg(t.selected).border_1().border_color(t.accent))
+      .when(!hovering, (el) => el.hover((st) => st.bg(t.hover)))
+      .on_hover((hovered, cx) => {
+        if (!this.drag?.active) return;
+        this.dropGroup = hovered ? g.id : this.dropGroup === g.id ? null : this.dropGroup;
+        cx.notify();
+      })
+      .on_mouse_up("left", (e, cx) => {
+        if (this.drag?.active) return; // the sidebar commits the drop
+        cx.stop_propagation();
+        if (e.click_count >= 2) this.startEdit("group", g.id, cx);
+        else this.toggleExpanded(key);
+        cx.notify();
+      })
+      .on_mouse_down("right", (e, cx) => {
+        cx.stop_propagation();
+        openMenu({ kind: "group", id: g.id }, e.position);
+      })
+      .child(svg(open ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim))
+      .child(svg(ICON.folder).size(11).flex_none().text_color(t.muted))
+      .when(Boolean(editing), (el) => el.child(editing))
+      .when(!editing, (el) => el.child(div().flex_1().min_w(0).truncate().font_semibold().text_color(t.muted).child(g.name)))
+      .when(!open, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(`${entries.length}`)));
+    return v_flex().child(head).when(open, (el) => el.child(this.rowsBlock(t, g.id)));
+  }
+
+  // The sessions of one section with the sliding selection highlight.
+  rowsBlock(t, section) {
+    const entries = sessionsIn(section);
+    if (!entries.length) {
+      return section === UNGROUPED
+        ? div().px(10).py(4).text_size(11).text_color(t.dim).child("No sessions yet. + starts one.")
+        : div();
+    }
+    const ids = entries.map((e) => e.tab.id);
+    const rows = entries.map((e) => this.tabRow(t, e.space, e.tab, ids, { section }));
+    const activeIdx = entries.findIndex((e) => e.tab.active && e.space.active);
+    if (activeIdx < 0) return div().pl(6).child(v_flex().children(rows));
+    const sp = spring("smooth");
+    let highlight = div()
+      .id(`hmux-hl-${section}-${this.gen}`)
+      .absolute()
+      .left(4)
+      .right(4)
+      .h(SESSION_H)
+      .top(activeIdx * SESSION_H + this.offsetOf("tab", section, ids[activeIdx]))
+      .rounded(5)
+      .bg(t.selected);
+    if (sp) highlight = highlight.spring("top", sp);
+    return div().relative().pl(6).child(highlight).child(v_flex().children(rows));
+  }
+
+  createGroup() {
+    const id = `g${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
+    setGroups([...groups(), { id, name: `Group ${groups().length + 1}` }]);
+    this.toggleExpanded(`g:${id}`, true);
+    setShared(RENAME_KEY, { kind: "group", id, at: Date.now() });
+  }
+
+  deleteGroup(id) {
+    const gof = { ...groupOf() };
+    const order = { ...orderOf() };
+    const moved = (order[id] ?? []).filter((tabId) => gof[tabId] === id);
+    for (const tabId of moved) delete gof[tabId];
+    delete order[id];
+    if (moved.length) order[UNGROUPED] = [...(order[UNGROUPED] ?? []), ...moved];
+    setGroups(groups().filter((g) => g.id !== id));
+    setShared(ASSIGN_KEY, gof);
+    setShared(ORDER_KEY, order);
+    this.expanded.delete(`g:${id}`);
+    this.saveExpanded();
   }
 
   // A folder row: click folds or unfolds it (never switches), double-click renames it,
@@ -957,12 +1140,10 @@ export default class Hmux extends View {
       .absolute()
       .left(4)
       .right(4)
-      .h(ROW)
-      .top(idx * ROW + (activeId ? this.offsetOf("tab", s.id, activeId) : 0))
+      .h(SESSION_H)
+      .top(idx * SESSION_H + (activeId ? this.offsetOf("tab", s.id, activeId) : 0))
       .rounded(5)
-      .bg(t.selected)
-      .border_l(2)
-      .border_color(t.accent);
+      .bg(t.selected);
     if (sp) highlight = highlight.spring("top", sp);
     return wrap(v_flex()
       .child(head)
@@ -976,38 +1157,71 @@ export default class Hmux extends View {
     return clean(lead?.title) || lead?.program?.name || `Command ${tb.index}`;
   }
 
-  // A session row: working time in front (how long its agent has been working, else since it last changed).
-  tabRow(t, s, tb, siblings) {
+  // A session row: name on top, its folder below, working time at the right of the name.
+  // The active session fills with accent; its close button sits at the right edge.
+  tabRow(t, s, tb, siblings, opts = {}) {
     const here = tb.active && s.active;
     const splits = tb.panes > 1 ? `${tb.panes} splits` : "";
     const label = this.tabLabel(tb);
     const working = Boolean(tb.working_since);
     const time = elapsed(tb.working_since ?? tb.changed_at);
+    const cwd = shortPath(panes().find((p) => p.tab === tb.id && p.cwd)?.cwd ?? s.folder);
     const editing = this.editor(t, "tab", tb.id);
+    const fg = here ? t.accent_foreground : t.foreground;
+    const sub = here ? t.accent_foreground : t.dim;
     const go = () => {
       if (!s.active) run("space.select", { id: s.id });
       run("tab.select", { id: tb.id });
     };
+    const close = div()
+      .id(`hmux-tab-x-${tb.id}`)
+      .flex_none()
+      .p(4)
+      .rounded(4)
+      .hover((st) => st.bg(here ? "#ffffff26" : t.hover))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        askToClose("Close this session?", "Its terminals and agents will end. This can't be undone.", "Close session", { name: "tab.close", args: { id: tb.id, confirmed: true } });
+      })
+      .child(svg(ICON.close).size(10).text_color(here ? t.accent_foreground : t.dim));
     const row = h_flex()
       .id(`hmux-tab-${tb.id}-${this.gen}`)
-      .h(ROW)
+      .h(SESSION_H)
       .mx(4)
-      .pl(4)
+      .pl(12)
       .pr(6)
-      .gap(3)
+      .py(7)
+      .gap(6)
       .items_center()
-      .rounded(5)
+      .rounded(8)
+      .when(here, (el) => el.bg(t.accent))
       .when(!here, (el) => el.hover((st) => st.bg(t.hover)))
-      .child(div().flex_none().w(22).text_size(10).text_color(working ? t.working : t.dim).truncate().child(time))
-      .when(Boolean(editing), (el) => el.child(editing))
-      .when(!editing, (el) => el.child(div().flex_1().min_w(0).truncate().text_color(here ? t.foreground : t.muted).child(label)))
-      .when(Boolean(splits) && !editing, (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(splits)))
-      .when(tb.zoomed, (el) => el.child(svg(ICON.zoom).size(10).flex_none().text_color(t.dim)))
-      .child(statusMark(t, tb.status, 9) ?? div());
+      .child(
+        v_flex()
+          .flex_1()
+          .min_w(0)
+          .gap(3)
+          .child(
+            h_flex().items_center().min_w(0)
+              .when(Boolean(editing), (el) => el.child(editing))
+              .when(!editing, (el) => el.child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().text_color(fg).child(label))),
+          )
+          .child(
+            h_flex().gap(8).items_center().min_w(0)
+              .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(sub).opacity(here ? 0.8 : 1).child(cwd))
+              .when(Boolean(splits), (el) => el.child(div().flex_none().text_size(9.5).text_color(sub).opacity(here ? 0.7 : 1).child(splits)))
+              .child(div().flex_none().text_size(9.5).text_color(sub).opacity(here ? 0.7 : 1).child(time))
+              .when(Boolean(statusMark(t, tb.status, 9, here)), (el) => el.child(statusMark(t, tb.status, 9, here))),
+          ),
+      )
+      .child(close);
     return this.draggable(row, t, {
       kind: "tab",
       id: tb.id,
       scope: s.id,
+      section: opts.section,
+      mode: opts.mode ?? (opts.section ? "local" : "machine"),
       siblings,
       onClick: go,
       onDouble: (cx) => this.startEdit("tab", tb.id, cx),
@@ -1036,7 +1250,7 @@ export default class Hmux extends View {
     if (!open) return header;
     const tone = { ready: t.done, loading: t.working, unavailable: t.idle };
     const word = { ready: "Connected", loading: "Connecting", unavailable: "Offline" };
-    const groups = others.map((m) => {
+    const machineRows = others.map((m) => {
       const key = `m:${m.name}`;
       const mOpen = this.expanded.has(key);
       const own = spaces().filter((s) => s.machine === m.name);
@@ -1067,7 +1281,7 @@ export default class Hmux extends View {
     });
     return v_flex()
       .child(header)
-      .child(v_flex().id("hmux-machines-list").max_h(220).overflow_y_scrollbar().pt(2).children(groups));
+      .child(v_flex().id("hmux-machines-list").max_h(220).overflow_y_scrollbar().pt(2).children(machineRows));
   }
 
   sessionSection(t, list) {

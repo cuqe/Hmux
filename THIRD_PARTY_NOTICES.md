@@ -5,7 +5,7 @@ art in `mods/hmux/`:
 
 ## Lucide icons
 
-`bell.svg`, `moon.svg`, `sun.svg`, `sidebar.svg`, `server.svg`
+`bell.svg`, `moon.svg`, `sun.svg`, `sidebar.svg`, `server.svg`, `folder-plus.svg`
 
 https://github.com/lucide-icons/lucide
 

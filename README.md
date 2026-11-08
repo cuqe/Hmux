@@ -1,43 +1,49 @@
 # Hmux
 
-A terminal-first Herdr layout with a fixed, glassy sidebar: agents and their
-sub-agents on top, then folders and their sessions, then a session footer with
-your working folder, branch, machines and how many agents need you. The whole
-window follows a light and a dark theme, switched from the title bar with a
-crossfade instead of a hard cut.
+A terminal-first Herdr layout with a fixed, glassy sidebar: agents on top, then
+sessions you file into your own groups, then a session footer with your working
+folder, branch and machines. Sessions are roomy two-line rows — name on top,
+folder below — and the active one fills with the accent color. The whole window
+follows a light and a dark theme, switched from the title bar with a crossfade
+instead of a hard cut.
 
 ![Hmux](preview.png)
 
 Built for macOS (the title bar leaves room for the traffic lights and the
-folder menu uses Finder and `pbcopy`).
+session menu uses Finder and `pbcopy`).
 
 ## What you get
 
 - **Title bar (32px):** sidebar toggle, notification bell with an unread badge,
-  the current space · session, sun/moon theme switch, new session. The window
-  drags by this bar; a double-click maximizes.
-- **Sidebar (232px, resizable 180–380px):**
-  - **Agents** — every agent with its program icon and status. Pinned agents
-    stay on top, then by urgency: needs you, done, working, idle. Sub-agents
-    are nested under the agent that started them (three levels).
-  - **Tabs** — your local folders. Click a folder to fold or unfold it (it never
-    switches space); click a session to go there. A session shows how long its
-    agent has been working (`now`, `4m`, `2h`), its splits and its status.
-  - **Session** — status counts, the focused pane's folder and branch, and
-    `This Mac + N` which folds open into your SSH machines, their spaces and
-    sessions.
+  the current space · session, sun/moon theme switch, new session. Drag the
+  window by this bar; double-click maximizes.
+- **Agents:** every agent with its program icon and status. Pinned agents stay
+  on top, then by urgency: needs you, done, working, idle. Sub-agents nest under
+  the agent that started them (three levels).
+- **Sessions:** one flat list, not tied to Herdr's folder spaces.
+  - `+` starts a new session right away — no folder picker, always a fresh one.
+  - The folder-plus button next to it creates a **group**.
+  - Each session is a two-line row: its name, then the folder it works in, with
+    the working time on the right. The active session is filled with the accent
+    color (white text) and carries a close ×; every row has its own ×.
+  - **Drag a session onto a group header** to file it there; drag it onto the
+    Sessions header to take it back out. Dragging inside a group reorders it.
+  - Click a group to fold it; double-click to rename; right-click for Rename
+    and Delete (deleting a group keeps its sessions, ungrouped).
+- **Session footer:** status counts, the focused pane's folder and branch, and
+  `This Mac + N` which folds open into your SSH machines, their spaces and
+  sessions.
 - **Panes:** a 20px header with the program, folder, branch and status; on
   hover, split right/down, zoom and close.
-- **Right-click:** rename, reset the name, split, reveal in Finder, copy the
-  path, new worktree, close — sessions, folders and agents each have their own
-  menu. Closing asks first.
-- **Drag to reorder:** grab a folder or session and it lifts; the rows spring
-  aside live and the drop lands where the preview showed it.
+- **Right-click a session:** go to it, rename, reset the name, split right or
+  down, close. Closing asks first.
+- **Drag to reorder:** grabbed sessions lift; the rows spring aside live and
+  the drop lands where the preview showed it.
 - **Theme crossfade:** the sun/moon button takes a picture of the window, flips
   the theme underneath and fades the picture out in 0.7s. Reduce Motion is
   respected.
 - **Notifications:** agents that turn "needs you" or "done" land in the bell's
-  popup; click one to jump to that agent. The list is kept for the session.
+  popup; click one to jump to that agent.
 
 ## Install
 
@@ -60,10 +66,13 @@ remove it. The layout needs the mods Herdr ships (`workspace-chrome`, `pane`,
 
 - `themes/hmux-white.json` and `themes/hmux-black.json` hold every color.
 - Sizes live in `layouts/hmux.json` (sidebar 232px, title bar 32px, pane header
-  20px) and in `mods/hmux/main.js` (`ROW = 22`).
+  20px) and in `mods/hmux/main.js` (`ROW = 22` for headers, `SESSION_H = 58` for
+  session rows).
 - Motion durations and springs are tokens in `mods/hmux/motion.js`.
+- Groups live in the mod's shared state: `hmux.groups` (the groups),
+  `hmux.groupOf` (session → group) and `hmux.order` (the order of each list).
 
 ## License
 
-MIT — see `LICENSE`. The five icons in `mods/hmux/*.svg` are Lucide icons
-(ISC, with three derived from Feather, MIT); see `THIRD_PARTY_NOTICES.md`.
+MIT — see `LICENSE`. The icons in `mods/hmux/*.svg` are Lucide icons (ISC, with
+three derived from Feather, MIT); see `THIRD_PARTY_NOTICES.md`.
