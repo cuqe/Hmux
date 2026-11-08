@@ -681,7 +681,7 @@ export default class Hmux extends View {
                   el.child(
                     div()
                       .absolute()
-                      .right(6)
+                      .right(12)
                       .top(0)
                       .bottom(0)
                       .flex()
