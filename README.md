@@ -57,8 +57,10 @@ session menu uses Finder and `pbcopy`).
   switch straight to it. An offline machine offers `Connect…` (its login
   prompt). The `+` on a machine row makes a **new space** on it; the header's
   `+` opens Settings → Machines. Right-click a machine for Connect (offline),
-  New space and Forget machine. Hover a session row under a machine and its ×
-  closes that session.
+  New space and Forget machine. Sessions under a machine use the same two-line
+  design as the list (name, folder and time; accent-filled when active, hover ×
+  to close); an unnamed remote tab shows its space's name, so new spaces never
+  all read `Command 1`.
 - **Panes:** a 20px header with the program, folder, branch and status; on
   hover, split right/down, zoom and close.
 - **Right-click a session:** go to it, rename, reset the name, split right or

@@ -1549,13 +1549,19 @@ export default class Hmux extends View {
       .child(v_flex().id("hmux-machines-list").max_h(260).overflow_y_scrollbar().pt(2).children(rows));
   }
 
-  // One session under its machine (remote, or the login tab): click goes there,
-  // hover swaps the status for an × that closes it.
+  // One session under its machine, in the same two-line design as the list:
+  // name on top (an unnamed remote tab takes its space's name, so new spaces on
+  // one machine never all read "Command 1"), folder and time below; the active
+  // one is accent-filled and hover shows an × that closes it.
   machineSessionRow(t, s, tb) {
     const here = tb.active && s.active;
     const hovered = this.machineHover === tb.id;
-    const name = this.tabLabel(tb);
+    const title = tb.named ? tb.name : s.machine ? s.name : this.tabLabel(tb);
     const cwd = shortPath(panes().find((p) => p.tab === tb.id && p.cwd)?.cwd ?? s.folder);
+    const time = elapsed(tb.working_since ?? tb.changed_at);
+    const fg = here ? t.accent_foreground : t.foreground;
+    const sub = here ? t.accent_foreground : t.dim;
+    const mark = statusMark(t, tb.status, 11, here, 7);
     const close = div()
       .id(`hmux-msess-x-${tb.id}`)
       .flex_none()
@@ -1564,24 +1570,25 @@ export default class Hmux extends View {
       .flex()
       .items_center()
       .justify_center()
-      .bg(t.foreground + "12")
-      .hover((st) => st.bg(t.foreground + "24"))
+      .bg(here ? "#ffffff26" : t.foreground + "12")
+      .hover((st) => st.bg(here ? "#ffffff40" : t.foreground + "24"))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => {
         cx.stop_propagation();
         askToClose("Close this session?", "Its terminals and agents will end. This can't be undone.", "Close session", { name: "tab.close", args: { id: tb.id, confirmed: true } });
       })
-      .child(svg(ICON.close).size(8).flex_none().text_color(t.muted));
+      .child(svg(ICON.close).size(8).flex_none().text_color(here ? t.accent_foreground : t.muted));
     return h_flex()
       .id(`hmux-msess-${tb.id}`)
-      .h(22)
-      .pl(24)
+      .h(42)
+      .mx(4)
+      .pl(18)
       .pr(6)
       .gap(6)
       .items_center()
-      .rounded(4)
-      .when(here, (el) => el.bg(t.selected))
-      .hover((st) => st.bg(t.hover))
+      .rounded(6)
+      .when(here, (el) => el.bg(t.accent))
+      .when(!here, (el) => el.hover((st) => st.bg(t.hover)))
       .on_hover((h, cx) => {
         this.machineHover = h ? tb.id : this.machineHover === tb.id ? null : this.machineHover;
         cx.notify();
@@ -1590,11 +1597,21 @@ export default class Hmux extends View {
         if (!s.active) run("space.select", { id: s.id });
         run("tab.select", { id: tb.id });
       })
-      .child(svg(ICON.terminal).size(9).flex_none().text_color(t.dim))
-      .child(div().flex_none().max_w(150).truncate().text_size(10.5).text_color(here ? t.foreground : t.muted).child(name))
-      .child(div().flex_1().min_w(0).truncate().text_size(9.5).text_color(t.dim).child(cwd))
+      .child(image(ICON.terminalMac).w(12).h(12).flex_none())
+      .child(
+        v_flex()
+          .flex_1()
+          .min_w(0)
+          .gap(2)
+          .child(div().truncate().text_size(11).font_medium().text_color(fg).child(title))
+          .child(
+            h_flex().gap(6).items_center().min_w(0)
+              .child(div().flex_1().min_w(0).truncate().text_size(9.5).text_color(sub).opacity(here ? 0.8 : 1).child(cwd))
+              .child(div().flex_none().text_size(9).text_color(sub).opacity(here ? 0.7 : 1).child(time)),
+          ),
+      )
       .when(hovered, (el) => el.child(close))
-      .when(!hovered && Boolean(statusMark(t, tb.status, 8)), (el) => el.child(statusMark(t, tb.status, 8)));
+      .when(!hovered && Boolean(mark), (el) => el.child(mark));
   }
 
   sessionSection(t, list) {
