@@ -305,12 +305,16 @@ const GRAB_STALE = 1500;
 const DRAG_STALE = 60000; // a drag mark older than this was left behind (a reload mid-drag)
 
 function openGrab(p, name, b) {
-  const g = shared(GRAB_KEY);
-  if (g && Date.now() - g.at < GRAB_STALE) return;
   const drag = shared(PANE_DRAG);
   if (drag && Date.now() - (drag.at ?? 0) < DRAG_STALE) return;
-  setShared(GRAB_KEY, { pane: p.pane, at: Date.now() });
-  openOverlay({
+  const g = shared(GRAB_KEY);
+  if (g && Date.now() - g.at < GRAB_STALE) {
+    if (g.pane === p.pane) return;
+    // The pointer slid on to another tab before the last handle saw it leave:
+    // that one gives way, so this tab can be grabbed at once.
+    if (g.overlay) closeOverlay(g.overlay);
+  }
+  const overlay = openOverlay({
     mod: "hmux",
     props: { role: "tabdrag", pane: p.pane, tab: p.tab, name, box: { x: b.x, y: b.y, w: b.width, h: b.height } },
     kind: "window",
@@ -319,6 +323,7 @@ function openGrab(p, name, b) {
     height: 1,
     at: { x: 0, y: 0 },
   });
+  setShared(GRAB_KEY, { pane: p.pane, at: Date.now(), overlay });
 }
 
 // Room left for the macOS window buttons. In full screen they are gone, so the
@@ -1934,14 +1939,18 @@ export default class Hmux extends View {
   beginTabDrag(cx) {
     const d = this.td;
     const p = props();
+    // The window's height bounds the bottom panes; until it is measured
+    // (on_size_change, before any move in practice) the drag waits.
+    if (!(d.bottom > 0)) return false;
     d.dragging = true;
-    d.rects = paneRects(p.tab, d.bottom || 100000);
+    d.rects = paneRects(p.tab, d.bottom);
     setShared(PANE_DRAG, { pane: p.pane, tab: p.tab, at: Date.now() });
     // One frame later, so the floating tab fades in rather than popping.
     cx.timer.after(16, (cx) => {
       d.shown = true;
       cx.notify();
     });
+    return true;
   }
 
   // Ends the drag: the floating tab and preview fade, the move runs, then the
@@ -2068,7 +2077,13 @@ export default class Hmux extends View {
       .relative()
       .track_focus(this.handle)
       .on_size_change((size) => {
-        d.bottom = size.height; // window px, like the pointer
+        // Window points, like the pointer and the header rects (zoom included).
+        d.bottom = size.height;
+        if (d.dragging && !d.busy) {
+          d.rects = paneRects(p.tab, d.bottom);
+          d.drop = dropAt(d.rects, p.pane, d.x, d.y);
+          if (d.drop) d.last = d.drop.rect;
+        }
       })
       .on_mouse_move((e, cx) => {
         if (d.busy) return;
@@ -2079,7 +2094,7 @@ export default class Hmux extends View {
         }
         if (!d.dragging) {
           if (Math.hypot(e.position.x - d.start.x, e.position.y - d.start.y) < DRAG_START) return;
-          this.beginTabDrag(cx);
+          if (!this.beginTabDrag(cx)) return;
         }
         this.tabDragTrack(e.position.x, e.position.y);
         cx.notify();

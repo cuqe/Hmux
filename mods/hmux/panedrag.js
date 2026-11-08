@@ -16,19 +16,29 @@ export const PANE_RECTS = "hmux.paneRects"; // { [paneId]: { x, y, w, h } } head
 
 const EDGE = 0.25; // share of a pane, from each edge, that drops beside it (the rest swaps)
 
-// A header publishes where it is (window px). Called on every press, so only a
-// real change writes.
+// What each header last published, so a pointer move over an unmoved header
+// costs one string compare instead of reading the shared map.
+const sent = new Map();
+
+// A header publishes where it is (window px). Called on every press and move,
+// so only a real change writes.
 export function publishRect(pane, b) {
   if (!b || !(b.width > 0)) return;
-  const all = shared(PANE_RECTS) ?? {};
-  const cur = all[pane];
   const r = { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) };
+  const key = `${r.x},${r.y},${r.w},${r.h}`;
+  const id = String(pane);
+  if (sent.get(id) === key) return;
+  const all = shared(PANE_RECTS) ?? {};
+  const cur = all[id];
+  sent.set(id, key);
   if (cur && cur.x === r.x && cur.y === r.y && cur.w === r.w && cur.h === r.h) return;
-  // Keep only panes that still exist, so the map never grows.
-  const live = new Set(panes().map((p) => p.pane));
+  // Keep only panes that still exist, so the map never grows. Object keys are
+  // strings, so compare as strings.
+  const live = new Set(panes().map((p) => String(p.pane)));
   const next = {};
-  for (const [id, v] of Object.entries(all)) if (live.has(id)) next[id] = v;
-  next[pane] = r;
+  for (const [k, v] of Object.entries(all)) if (live.has(k)) next[k] = v;
+  for (const k of [...sent.keys()]) if (!live.has(k)) sent.delete(k);
+  next[id] = r;
   setShared(PANE_RECTS, next);
 }
 
@@ -113,12 +123,34 @@ async function park(cx, terminal, ms = 3000) {
   return true;
 }
 
+// A terminal a failed move left parked (running, but with no pane) goes back
+// beside `anchor`, or beside any pane of its tab when the anchor is gone.
+async function unpark(cx, terminal, anchor, tab, place) {
+  if (!terminal || panes().some((x) => x.terminal === terminal)) return;
+  try {
+    const at = panes().find((x) => x.pane === anchor) ?? panes().find((x) => x.tab === tab);
+    if (at) run("pane.focus", { pane: at.pane });
+    run("terminal.keep", { terminal, place });
+    await paneOf(cx, terminal);
+  } catch {
+    // Still parked: it keeps running and the tab's Parked list can bring it back.
+  }
+}
+
 // Moves the source pane's terminal beside the target, on `zone`'s side.
 async function moveBeside(cx, a, b, zone) {
   if (!(await park(cx, a.terminal))) return false;
-  run("pane.focus", { pane: b.pane });
-  run("terminal.keep", { terminal: a.terminal, place: zone === "left" || zone === "right" ? "right" : "down" });
-  if (!(await paneOf(cx, a.terminal))) return false;
+  const place = zone === "left" || zone === "right" ? "right" : "down";
+  try {
+    run("pane.focus", { pane: b.pane });
+    run("terminal.keep", { terminal: a.terminal, place });
+  } catch {
+    // Handled below: the terminal has no pane.
+  }
+  if (!(await paneOf(cx, a.terminal))) {
+    await unpark(cx, a.terminal, b.pane, a.tab, place);
+    return false;
+  }
   if (zone === "left" || zone === "up") {
     run("pane.focus", { terminal: a.terminal });
     run("pane.swap", { direction: zone });
@@ -151,23 +183,35 @@ async function swapPanes(cx, a, b, rects, tol) {
   const dirA = acrossParent(a, rects, tol);
   const dirB = acrossParent(b, rects, tol);
   const before = new Set(panes().map((p) => p.pane));
-  run("pane.split", { direction: dirA, pane: a.pane, mod: "hmux", props: { role: "spacer" } });
+  // The stand-in is a mod pane (no terminal) of this mod, new in this tab, so a
+  // pane someone else opens meanwhile is never taken for it.
+  const isHolder = (p) => !before.has(p.pane) && p.tab === a.tab && p.terminal == null && p.mod === "hmux";
   let holder = null;
-  for (let i = 0; i < 80 && !holder; i++) {
-    holder = panes().find((p) => !before.has(p.pane) && p.tab === a.tab)?.pane ?? null;
-    if (!holder) await sleep(cx, 25);
+  try {
+    run("pane.split", { direction: dirA, pane: a.pane, mod: "hmux", props: { role: "spacer" } });
+    for (let i = 0; i < 80 && !holder; i++) {
+      holder = panes().find(isHolder)?.pane ?? null;
+      if (!holder) await sleep(cx, 25);
+    }
+    if (!holder) return false;
+    if (!(await park(cx, a.terminal))) return false;
+    run("pane.focus", { pane: b.pane });
+    run("terminal.keep", { terminal: a.terminal, place: dirB });
+    if (!(await paneOf(cx, a.terminal))) return false;
+    if (!(await park(cx, b.terminal))) return false;
+    run("pane.focus", { pane: holder });
+    run("terminal.keep", { terminal: b.terminal, place: dirA });
+    return Boolean(await paneOf(cx, b.terminal));
+  } catch {
+    return false;
+  } finally {
+    // Whatever failed, no terminal stays parked and no stand-in stays behind:
+    // a terminal still without a pane goes back into the stand-in's slot.
+    holder ??= panes().find(isHolder)?.pane ?? null;
+    await unpark(cx, b.terminal, holder ?? b.pane, a.tab, dirA);
+    await unpark(cx, a.terminal, holder ?? b.pane, a.tab, dirA);
+    if (holder) run("pane.close", { pane: holder });
   }
-  if (!holder) return false;
-  if (!(await park(cx, a.terminal))) return false;
-  run("pane.focus", { pane: b.pane });
-  run("terminal.keep", { terminal: a.terminal, place: dirB });
-  if (!(await paneOf(cx, a.terminal))) return false;
-  if (!(await park(cx, b.terminal))) return false;
-  run("pane.focus", { pane: holder });
-  run("terminal.keep", { terminal: b.terminal, place: dirA });
-  await paneOf(cx, b.terminal);
-  run("pane.close", { pane: holder });
-  return true;
 }
 
 // Carries out a drop. Resolves true when the pane moved.
