@@ -55,8 +55,9 @@ session menu uses Finder and `pbcopy`).
   `This Mac + N` — each SSH machine with its connection state. Open a machine
   to see **its sessions right under it** (the login tab too); click one to
   switch straight to it. An offline machine offers `Connect…` (its login
-  prompt). Right-click a machine for Connect/Open, New space on `<name>`, and
-  Forget machine; the `+` opens Settings → Machines.
+  prompt). The `+` on a machine row opens it (its first space, or a new one);
+  the header's `+` opens Settings → Machines. Right-click a machine for
+  Connect (offline), New space and Forget machine.
 - **Panes:** a 20px header with the program, folder, branch and status; on
   hover, split right/down, zoom and close.
 - **Right-click a session:** go to it, rename, reset the name, split right or

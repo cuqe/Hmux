@@ -706,14 +706,9 @@ export default class Hmux extends View {
       const items = [];
       if (m.layout === "unavailable") {
         items.push(["Connect", () => run("tab.new", { argv: ["hc", "machine", "login", m.name], name: `login ${m.name}` })]);
-      } else {
-        items.push(["Open", () => {
-          const first = spaces().find((x) => x.machine === m.name);
-          if (first) run("space.select", { id: first.id });
-          else run("space.new", { machine: m.name });
-        }]);
+        items.push(null);
       }
-      items.push([`New space on ${m.name}`, () => run("space.new", { machine: m.name })]);
+      items.push(["New space", () => run("space.new", { machine: m.name })]);
       items.push(null);
       items.push(["Forget machine", () => askToClose(`Forget ${m.name}?`, "Herdr forgets this machine. Its terminals keep running there.", "Forget machine", { exec: ["hc", ["machine", "rm", m.name]] }), true]);
       return items;
@@ -1519,7 +1514,12 @@ export default class Hmux extends View {
         .child(svg(ICON.server).size(11).flex_none().text_color(t.muted))
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(m.name))
         .child(div().size(6).flex_none().rounded(3).bg(tone[m.layout] ?? t.idle))
-        .child(div().flex_none().text_size(10).text_color(t.dim).child(word[m.layout] ?? ""));
+        // A plus opens the machine: its first space, or a new one.
+        .child(iconButton(t, `hmux-mopen-${m.name}`, ICON.plus, () => {
+          const first = spaces().find((s) => s.machine === m.name);
+          if (first) run("space.select", { id: first.id });
+          else run("space.new", { machine: m.name });
+        }, 10));
       if (!mOpen) return head;
       const body = [];
       if (m.layout === "unavailable") {

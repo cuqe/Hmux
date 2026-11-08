@@ -93,8 +93,10 @@ Local sessions keep their folder groups.
   typable there; clicking a connected one selects its first space (or makes one
   when it has none). Open a machine to list **its sessions under it** (each
   22px row: title, path, status; click to `space.select` + `tab.select`, plus
-  the `login <machine>` tab), with a `Connect…` row when offline. Right-click a
-  machine for Connect/Open, `New space on <name>` (`space.new {machine}`) and
+  the `login <machine>` tab), with a `Connect…` row when offline. The machine
+  row ends in a state dot and a `+` that opens it (`space.select` on its first
+  space, else `space.new {machine}`) — the old `Connected` word is gone.
+  Right-click for Connect (offline), New space (`space.new {machine}`) and
   `Forget machine` (`hc machine rm <name>` through the confirm dialog's exec
   form — Herdr has no offline toggle, so this forgets the machine while its
   terminals keep running).
