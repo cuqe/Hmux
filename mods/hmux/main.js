@@ -650,9 +650,9 @@ export default class Hmux extends View {
                 .id(`hmux-inbox-${n.id}`)
                 .relative()
                 .pl(12)
-                .pr(10)
+                .pr(8)
                 .py(7)
-                .gap(8)
+                .gap(4)
                 .items_center()
                 .when(hovered, (el) => el.bg(t.hover))
                 .on_hover((h, cx) => {
@@ -680,7 +680,7 @@ export default class Hmux extends View {
                 .child(
                   div()
                     .flex_none()
-                    .size(18)
+                    .size(16)
                     .flex()
                     .items_center()
                     .justify_center()
@@ -688,7 +688,7 @@ export default class Hmux extends View {
                       el.child(
                         div()
                           .id(`hmux-inbox-x-${n.id}`)
-                          .size(18)
+                          .size(16)
                           .rounded(9)
                           .flex()
                           .items_center()
