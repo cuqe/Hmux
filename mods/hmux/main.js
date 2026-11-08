@@ -34,7 +34,7 @@ const INBOX_HEAD = 34;
 const DRAG_START = 4; // px the pointer travels before a press becomes a drag
 const ICON = {
   plus: "mods/workspace-chrome/plus.svg",
-  spinner: "mods/workspace-chrome/spinner.svg",
+  spinner: "mods/hmux/spinner-macos.svg",
   branch: "mods/workspace-chrome/git-branch.svg",
   folder: "mods/workspace-chrome/folder.svg",
   pin: "mods/workspace-chrome/pin.svg",
@@ -51,6 +51,7 @@ const ICON = {
   sidebar: "mods/hmux/sidebar.svg",
   server: "mods/hmux/server.svg",
   folderPlus: "mods/hmux/folder-plus.svg",
+  link: "mods/hmux/link.svg",
 };
 const STATUS_LABEL = { working: "Working", blocked: "Needs you", done: "Done", idle: "Idle" };
 const INBOX_TEXT = { blocked: "Needs your input.", done: "Finished its work." };
@@ -108,17 +109,21 @@ function programIcon(p, size, color) {
   return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
 }
 
-// Status mark: spinner while working (a static dot under reduced motion). White on an accent row.
+// Status mark: spinner while working (a static dot under reduced motion). On an
+// accent-filled row the marks keep their meaning: white spinner, yellow blocked,
+// light green done, a half-white idle dot.
 function statusMark(t, status, size = 10, onAccent = false) {
-  const ink = onAccent ? t.accent_foreground : null;
   if (status === "working") {
     return isReduced()
-      ? div().size(6).flex_none().rounded(3).bg(ink ?? t.working)
-      : svg(ICON.spinner).size(size).flex_none().text_color(ink ?? t.working).spin(loopMs("spinner"));
+      ? div().size(6).flex_none().rounded(3).bg(onAccent ? t.accent_foreground : t.working)
+      : svg(ICON.spinner).size(size).flex_none().text_color(onAccent ? t.accent_foreground : t.working).spin(loopMs("spinner"));
   }
-  if (status === "blocked") return div().size(6).flex_none().rounded(3).bg(ink ?? t.blocked);
-  if (status === "done") return div().size(6).flex_none().rounded(3).bg(ink ?? t.done);
-  if (status === "idle") return div().size(5).flex_none().rounded(3).bg(ink ?? t.idle);
+  if (status === "blocked") return div().size(6).flex_none().rounded(3).bg(onAccent ? "#ffd60a" : t.blocked);
+  if (status === "done") return div().size(6).flex_none().rounded(3).bg(onAccent ? "#5ee6a0" : t.done);
+  if (status === "idle") {
+    const dot = div().size(5).flex_none().rounded(3).bg(onAccent ? "#ffffff" : t.idle);
+    return onAccent ? dot.opacity(0.55) : dot;
+  }
   return null;
 }
 
@@ -180,25 +185,71 @@ const orderOf = () => {
 const setGroups = (list) => setShared(GROUPS_KEY, list);
 const setOrder = (section, ids) => setShared(ORDER_KEY, { ...orderOf(), [section]: ids });
 
-// Every local session (tab), in Herdr's own order, before grouping.
-function localSessions() {
+// Every session (tab) on every machine, in Herdr's own order, before grouping.
+function allSessions() {
   const out = [];
   for (const s of spaces()) {
-    if (s.machine) continue;
     for (const tb of s.tabs) if (!tb.settled || tb.active) out.push({ space: s, tab: tb });
   }
   return out;
 }
 
-// The sessions of one section (a group id or UNGROUPED), in the user's order.
+// The folder a session works in: its first pane's cwd, else its space's folder.
+function sessionFolder(e) {
+  const p = panes().find((x) => x.tab === e.tab.id && x.cwd);
+  return p?.cwd ?? e.space.folder ?? "";
+}
+
+// A session's auto-group key: its machine and its working folder.
+const autoKey = (e) => {
+  const cwd = sessionFolder(e);
+  return cwd ? `${e.space.machine ?? ""}|${cwd}` : "";
+};
+
+// Sessions on the same machine working in the same folder form an automatic
+// group (two or more of them). Membership follows the folder: when a session
+// moves, it leaves and joins on its own. A manual group always wins.
+function autoGroups() {
+  const gof = groupOf();
+  const buckets = new Map();
+  for (const e of allSessions()) {
+    if (gof[e.tab.id]) continue;
+    const key = autoKey(e);
+    if (!key) continue;
+    if (!buckets.has(key)) buckets.set(key, { key, cwd: sessionFolder(e), machine: e.space.machine ?? "", entries: [] });
+    buckets.get(key).entries.push(e);
+  }
+  return [...buckets.values()].filter((b) => b.entries.length > 1).sort((a, b) => a.cwd.localeCompare(b.cwd));
+}
+
+// The sessions of one manual section (a group id or UNGROUPED), in the user's order.
 function sessionsIn(section) {
   const gof = groupOf();
-  const list = localSessions();
+  const auto = new Set(autoGroups().map((b) => b.key));
+  const list = allSessions();
+  const own = section === UNGROUPED
+    ? list.filter((e) => !gof[e.tab.id] && !auto.has(autoKey(e)))
+    : list.filter((e) => gof[e.tab.id] === section);
   const seen = new Map(list.map((e, i) => [e.tab.id, i]));
   const rank = new Map((orderOf()[section] ?? []).map((id, i) => [id, i]));
-  return list
-    .filter((e) => (gof[e.tab.id] ?? UNGROUPED) === section)
+  return own
     .sort((a, b) => (rank.get(a.tab.id) ?? 1e9) - (rank.get(b.tab.id) ?? 1e9) || seen.get(a.tab.id) - seen.get(b.tab.id));
+}
+
+// The sessions of one auto group (key = machine|folder), in the user's order.
+function autoSessions(key) {
+  const gof = groupOf();
+  const list = allSessions();
+  const seen = new Map(list.map((e, i) => [e.tab.id, i]));
+  const rank = new Map((orderOf()[`a:${key}`] ?? []).map((id, i) => [id, i]));
+  return list
+    .filter((e) => !gof[e.tab.id] && autoKey(e) === key)
+    .sort((a, b) => (rank.get(a.tab.id) ?? 1e9) - (rank.get(b.tab.id) ?? 1e9) || seen.get(a.tab.id) - seen.get(b.tab.id));
+}
+
+// Section ids starting with "a:" are automatic folder groups.
+function sectionEntries(section) {
+  return section.startsWith("a:") ? autoSessions(section.slice(2)) : sessionsIn(section);
 }
 
 // Move a session into a group (or out, with UNGROUPED), keeping the order lists tidy.
@@ -260,6 +311,7 @@ export default class Hmux extends View {
   render(cx) {
     const role = props()?.role ?? "sidebar";
     if (role === "top") return this.renderTop();
+    if (role === "sessionbar") return this.renderSessionBar();
     if (role === "fade") return this.renderFade();
     if (role === "pane") return this.renderPane();
     if (role === "inbox") return this.renderInbox();
@@ -410,6 +462,64 @@ export default class Hmux extends View {
       .child(image(p.image).w(p.width).h(p.height));
   }
 
+  // ── session bar ────────────────────────────────────────────────────────────
+  // Above the panes: the session's folder, then one chip per pane of its tab.
+  renderSessionBar() {
+    const t = theme();
+    const f = focused();
+    const pane = f?.pane ? panes().find((x) => x.pane === f.pane) : null;
+    const space = spaces().find((s) => s.active);
+    const tab = space?.tabs.find((tb) => tb.active);
+    const cwd = shortPath(pane?.cwd ?? f?.cwd ?? space?.folder ?? "");
+    const list = tab ? panes().filter((x) => x.tab === tab.id) : [];
+    return h_flex()
+      .id("hmux-sessionbar")
+      .size_full()
+      .px(10)
+      .gap(8)
+      .items_center()
+      .text_size(11.5)
+      .child(svg(ICON.folder).size(12).flex_none().text_color(t.muted))
+      .child(div().flex_none().max_w(240).truncate().text_color(t.muted).child(cwd))
+      .child(div().flex_none().w(1).h(14).bg(t.border))
+      .child(h_flex().flex_1().min_w(0).gap(2).items_center().children(list.map((p) => this.paneTab(t, p))))
+      .child(iconButton(t, "hmux-sb-split", ICON.splitRight, () => run("pane.split", { direction: "right" }), 11))
+      .child(iconButton(t, "hmux-sb-split-down", ICON.splitDown, () => run("pane.split", { direction: "down" }), 11));
+  }
+
+  // One pane as a tab: title, status and a close ×; the active pane is filled.
+  paneTab(t, p) {
+    const active = Boolean(p.focused);
+    const name = ((p.program?.agent || p.program?.shell) && p.program.name) || clean(p.title) || p.program?.name || "shell";
+    const close = div()
+      .id(`hmux-sbtab-x-${p.pane}`)
+      .flex_none()
+      .p(2)
+      .rounded(3)
+      .hover((s) => s.bg(t.hover))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        run("pane.close", { pane: p.pane });
+      })
+      .child(svg(ICON.close).size(8).flex_none().text_color(t.dim));
+    return h_flex()
+      .id(`hmux-sbtab-${p.pane}`)
+      .h(20)
+      .px(7)
+      .gap(5)
+      .items_center()
+      .rounded(5)
+      .flex_none()
+      .when(active, (el) => el.bg(t.selected))
+      .when(!active, (el) => el.hover((s) => s.bg(t.hover)))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click(() => run("pane.focus", { pane: p.pane }))
+      .child(div().max_w(150).truncate().text_size(11).text_color(active ? t.foreground : t.muted).child(name))
+      .when(Boolean(statusMark(t, p.status, 8)), (el) => el.child(statusMark(t, p.status, 8)))
+      .child(close);
+  }
+
   // ── notifications popup ────────────────────────────────────────────────────
   renderInbox() {
     const t = theme();
@@ -465,6 +575,20 @@ export default class Hmux extends View {
                       .child(div().flex_none().text_size(10.5).text_color(t.dim).child(clock(n.at))))
                     .child(div().text_size(11).text_color(n.status === "blocked" ? t.blocked : t.done).child(INBOX_TEXT[n.status] ?? ""))
                     .child(div().truncate().text_size(10.5).text_color(t.dim).child(alive ? n.where : `${n.where} · Agent has ended`)),
+                )
+                .child(
+                  div()
+                    .id(`hmux-inbox-x-${n.id}`)
+                    .flex_none()
+                    .p(2)
+                    .rounded(3)
+                    .hover((s) => s.bg(t.hover))
+                    .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+                    .on_click((_e, cx) => {
+                      cx.stop_propagation();
+                      setShared(INBOX_KEY, inbox().filter((x) => x.id !== n.id));
+                    })
+                    .child(svg(ICON.close).size(9).flex_none().text_color(t.dim)),
                 );
             }),
           )
@@ -842,7 +966,7 @@ export default class Hmux extends View {
     const p = this.pending;
     if (!p) return;
     const now = p.mode === "local"
-      ? sessionsIn(p.scope).map((e) => e.tab.id)
+      ? sectionEntries(p.scope).map((e) => e.tab.id)
       : p.kind === "space"
         ? spaces().filter((x) => (x.machine ?? "") === p.scope).map((x) => x.id)
         : (spaces().find((x) => x.id === p.scope)?.tabs ?? []).filter((tb) => p.order.includes(tb.id)).map((tb) => tb.id);
@@ -998,6 +1122,9 @@ export default class Hmux extends View {
   sessionsSection(t) {
     const addGroup = iconButton(t, "hmux-group-new", ICON.folderPlus, () => this.createGroup(), 11);
     const addSession = iconButton(t, "hmux-session-new", ICON.plus, () => run("tab.new", {}), 11);
+    const auto = autoGroups();
+    const loose = sessionsIn(UNGROUPED);
+    const separated = (groups().length > 0 || auto.length > 0) && loose.length > 0;
     return v_flex()
       .pt(4)
       .child(
@@ -1010,7 +1137,47 @@ export default class Hmux extends View {
           .child(sectionTitle(t, "Sessions", null, h_flex().gap(1).child(addGroup).child(addSession))),
       )
       .children(groups().map((g) => this.groupBlock(t, g)))
+      .children(auto.map((a) => this.autoGroupBlock(t, a)))
+      // Sessions in no group sit below their own label, so they never read as a
+      // group's children.
+      .when(separated, (el) =>
+        el.child(
+          h_flex().pt(10).pb(1).px(10).gap(6).items_center()
+            .child(div().text_size(9.5).font_semibold().text_color(t.dim).child("UNGROUPED"))
+            .child(div().flex_1().h(1).bg(t.border)),
+        ),
+      )
       .child(this.rowsBlock(t, UNGROUPED));
+  }
+
+  // An automatic group: the sessions that share one working folder. Unlike a
+  // manual group it has no fill and a link icon, so the two never read alike.
+  autoGroupBlock(t, a) {
+    const key = `a:${a.key}`;
+    const open = this.expanded.has(key);
+    const entries = autoSessions(a.key);
+    const label = `${shortPath(a.cwd)}${a.machine ? ` · ${a.machine}` : ""}`;
+    const head = h_flex()
+      .id(`hmux-auto-${a.key}`)
+      .mx(4)
+      .pl(2)
+      .pr(6)
+      .h(ROW)
+      .gap(5)
+      .items_center()
+      .rounded(5)
+      .hover((st) => st.bg(t.hover))
+      .on_mouse_up("left", (e, cx) => {
+        if (this.drag?.active) return;
+        cx.stop_propagation();
+        this.toggleExpanded(key);
+        cx.notify();
+      })
+      .child(svg(open ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim))
+      .child(svg(ICON.link).size(10).flex_none().text_color(t.dim))
+      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(label))
+      .when(!open, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(`${entries.length}`)));
+    return v_flex().child(head).when(open, (el) => el.child(this.rowsBlock(t, key)));
   }
 
   // A group: a header that folds and takes drops, then its sessions.
@@ -1058,7 +1225,7 @@ export default class Hmux extends View {
 
   // The sessions of one section.
   rowsBlock(t, section) {
-    const entries = sessionsIn(section);
+    const entries = sectionEntries(section);
     if (!entries.length) {
       return section === UNGROUPED
         ? div().px(10).py(4).text_size(11).text_color(t.dim).child("No sessions yet. + starts one.")
@@ -1088,68 +1255,6 @@ export default class Hmux extends View {
     setShared(ORDER_KEY, order);
     this.expanded.delete(`g:${id}`);
     this.saveExpanded();
-  }
-
-  // A folder row: click folds or unfolds it (never switches), double-click renames it,
-  // right-click opens its menu, drag reorders it within its machine.
-  spaceGroup(t, s) {
-    const open = this.expanded.has(s.id);
-    const siblings = spaces().filter((x) => (x.machine ?? null) === (s.machine ?? null)).map((x) => x.id);
-    // The whole group (folder row and its sessions) moves while dragging; its height feeds the preview.
-    const wrap = (inner) =>
-      this.slide(
-        v_flex()
-          .id(`hmux-space-wrap-${s.id}-${this.gen}`)
-          .on_size_change((size) => { this.heights[s.id] = size.height; })
-          .child(inner),
-        "space",
-        s.machine ?? "",
-        s.id,
-      ).when(this.drag?.active && this.drag.id === s.id, (el) => el.bg(t.raised).rounded(6).shadow_md());
-    const editing = this.editor(t, "space", s.id);
-    let head = h_flex()
-      .id(`hmux-space-${s.id}-${this.gen}`)
-      .mx(4)
-      .pl(2)
-      .pr(6)
-      .h(ROW)
-      .gap(5)
-      .items_center()
-      .rounded(5)
-      .bg(t.foreground + "0d") // a light shade sets folders apart from their sessions
-      .hover((st) => st.bg(t.hover))
-      .child(svg(open ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim))
-      .child(div().size(6).flex_none().rounded(2).bg(s.active ? t.accent : t.input))
-      .when(Boolean(editing), (el) => el.child(editing))
-      .when(!editing, (el) => el.child(div().flex_1().min_w(0).truncate().font_semibold().text_color(s.active ? t.foreground : t.muted).child(s.name)))
-      .when(Boolean(s.branch) && !editing, (el) =>
-        el.child(h_flex().flex_none().max_w(90).gap(3).items_center().text_size(10.5).text_color(t.dim)
-          .child(svg(ICON.branch).size(10).flex_none())
-          .child(div().truncate().child(s.branch))),
-      )
-      .when(!open && !editing, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(`${s.tabs.length}`)))
-      .when(Boolean(statusMark(t, s.status)) && !open, (el) => el.child(statusMark(t, s.status)));
-    head = this.draggable(head, t, {
-      kind: "space",
-      id: s.id,
-      scope: s.machine ?? "",
-      siblings,
-      offset: false,
-      onClick: () => this.toggleExpanded(s.id),
-      // The first click of a double-click already folded it: undo that, then rename.
-      onDouble: (cx) => {
-        this.toggleExpanded(s.id);
-        this.startEdit("space", s.id, cx);
-      },
-      onMenu: (at) => openMenu({ kind: "space", id: s.id }, at),
-    });
-    if (!open) return wrap(head);
-
-    // Unfolded: its sessions. Clicking one goes there. In the shown space a highlight springs between rows.
-    const tabs = s.tabs.filter((tb) => !tb.settled || tb.active);
-    const tabIds = tabs.map((tb) => tb.id);
-    const rows = tabs.map((tb) => this.tabRow(t, s, tb, tabIds));
-    return wrap(v_flex().child(head).child(div().pl(6).child(v_flex().children(rows))));
   }
 
   // Unnamed sessions are called by their index: use the agent's title.
@@ -1231,10 +1336,18 @@ export default class Hmux extends View {
     });
   }
 
-  // SSH machines: "This Mac + N" folds open into each machine, its spaces and their sessions.
+  // SSH machines: status and a way to add one. Their sessions are listed in
+  // the Sessions section above (click one to switch straight to it).
   machinesBlock(t) {
     const others = machines().filter((m) => m.name);
-    if (!others.length) return div().truncate().child("This Mac");
+    const add = iconButton(t, "hmux-machine-add", ICON.plus, () => run("app.settings", { section: "machines" }), 10);
+    if (!others.length) {
+      return h_flex()
+        .items_center()
+        .gap(6)
+        .child(div().flex_1().truncate().child("This Mac"))
+        .child(add);
+    }
     const offline = others.filter((m) => m.layout === "unavailable").length;
     const open = this.expanded.has("m:*");
     const header = h_flex()
@@ -1248,15 +1361,13 @@ export default class Hmux extends View {
         cx.notify();
       })
       .child(svg(open ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none())
-      .child(div().flex_1().min_w(0).truncate().child(`This Mac + ${others.length} ${others.length === 1 ? "machine" : "machines"}${offline ? ` · ${offline} offline` : ""}`));
+      .child(div().flex_1().min_w(0).truncate().child(`This Mac + ${others.length} ${others.length === 1 ? "machine" : "machines"}${offline ? ` · ${offline} offline` : ""}`))
+      .child(add);
     if (!open) return header;
     const tone = { ready: t.done, loading: t.working, unavailable: t.idle };
     const word = { ready: "Connected", loading: "Connecting", unavailable: "Offline" };
-    const machineRows = others.map((m) => {
-      const key = `m:${m.name}`;
-      const mOpen = this.expanded.has(key);
-      const own = spaces().filter((s) => s.machine === m.name);
-      const row = h_flex()
+    const rows = others.map((m) =>
+      h_flex()
         .id(`hmux-machine-${m.name}`)
         .h(ROW)
         .pl(8)
@@ -1266,24 +1377,14 @@ export default class Hmux extends View {
         .rounded(5)
         .text_size(11.5)
         .hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => {
-          this.toggleExpanded(key);
-          cx.notify();
-        })
-        .child(svg(mOpen ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim))
         .child(svg(ICON.server).size(11).flex_none().text_color(t.muted))
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(m.name))
         .child(div().size(6).flex_none().rounded(3).bg(tone[m.layout] ?? t.idle))
-        .child(div().flex_none().text_size(10).text_color(t.dim).child(word[m.layout] ?? ""));
-      if (!mOpen) return row;
-      const body = own.length
-        ? own.map((s) => this.spaceGroup(t, s))
-        : [div().pl(26).py(2).text_size(10.5).text_color(t.dim).child("No spaces on this machine yet.")];
-      return v_flex().child(row).child(v_flex().pl(6).children(body));
-    });
+        .child(div().flex_none().text_size(10).text_color(t.dim).child(word[m.layout] ?? "")),
+    );
     return v_flex()
       .child(header)
-      .child(v_flex().id("hmux-machines-list").max_h(220).overflow_y_scrollbar().pt(2).children(machineRows));
+      .child(v_flex().id("hmux-machines-list").max_h(160).overflow_y_scrollbar().pt(2).children(rows));
   }
 
   sessionSection(t, list) {

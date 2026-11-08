@@ -13,7 +13,7 @@ const TOKENS = {
     smooth: { response: 314, damping: 0.9 },
     gentle: { response: 424, damping: 0.944 },
   },
-  loop: { spinner: 800, pulse: 1600 },
+  loop: { spinner: 1000, pulse: 1600 },
   // Theme crossfade: wait for the window picture to load, then for the new theme to draw.
   fade: { imageLoad: 120, themeApply: 180 },
 };

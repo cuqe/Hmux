@@ -24,7 +24,15 @@ session menu uses Finder and `pbcopy`).
   agent** (asks first).
 - **Sessions:** one flat list, not tied to Herdr's folder spaces.
   - `+` starts a new session right away — no folder picker, always a fresh one.
-  - The folder-plus button next to it creates a **group**.
+  - The folder-plus button next to it creates a **group** (shaded, with a folder
+    icon).
+  - Sessions that share a working folder on the same machine form an **auto
+    group** on their own (link icon, no fill). It appears and dissolves as
+    sessions start, end or `cd` — no setup. A session you put in a manual group
+    stays there.
+  - Sessions in no group sit below an `UNGROUPED` rule, so they never read as a
+    group's children.
+  - SSH sessions are in the same list too; click one to switch straight to it.
   - Each session is a two-line row: its name, then the folder it works in, with
     the working time on the right. The active session is filled with the accent
     color (white text) and carries a close ×; every row has its own ×.
@@ -32,9 +40,12 @@ session menu uses Finder and `pbcopy`).
     Sessions header to take it back out. Dragging inside a group reorders it.
   - Click a group to fold it; double-click to rename; right-click for Rename
     and Delete (deleting a group keeps its sessions, ungrouped).
+- **Session bar:** above the panes, the selected session's folder icon and
+  working path, then one chip per pane of its tab (click to focus, × to close)
+  and split buttons at the right.
 - **Session footer:** status counts, the focused pane's folder and branch, and
-  `This Mac + N` which folds open into your SSH machines, their spaces and
-  sessions.
+  `This Mac + N` — each SSH machine with its connection state, plus a `+` that
+  opens Settings → Machines to add a connection.
 - **Panes:** a 20px header with the program, folder, branch and status; on
   hover, split right/down, zoom and close.
 - **Right-click a session:** go to it, rename, reset the name, split right or
@@ -45,7 +56,7 @@ session menu uses Finder and `pbcopy`).
   the theme underneath and fades the picture out in 0.7s. Reduce Motion is
   respected.
 - **Notifications:** agents that turn "needs you" or "done" land in the bell's
-  popup; click one to jump to that agent.
+  popup; click one to jump to that agent, or its × to drop just that entry.
 
 ## Install
 
@@ -76,5 +87,6 @@ remove it. The layout needs the mods Herdr ships (`workspace-chrome`, `pane`,
 
 ## License
 
-MIT — see `LICENSE`. The icons in `mods/hmux/*.svg` are Lucide icons (ISC, with
-three derived from Feather, MIT); see `THIRD_PARTY_NOTICES.md`.
+MIT — see `LICENSE`. The Lucide icons here (`bell`, `sun`, `moon`, `sidebar`,
+`server`, `folder-plus`, `link`; three derived from Feather, MIT) are ISC —
+see `THIRD_PARTY_NOTICES.md`. `spinner-macos.svg` is original.

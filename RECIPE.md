@@ -54,6 +54,13 @@ the Session footer, which stays pinned at the bottom.
   name at 12px semibold `muted`, and its session count when folded. While a
   session is dragged over one, the header turns `selected` with a 1px accent
   border.
+- **Auto group rows — 22px**, no fill, a 10px chevron, a 10px link icon, then
+  the path (`~/…`, plus ` · machine` off this Mac) at 11px `dim`. They appear
+  by themselves when two or more sessions on the same machine work in the same
+  folder, and fold like any other group.
+- **The `UNGROUPED` rule** — a 9.5px semibold `dim` label followed by a 1px
+  `border` line, shown only when some groups exist above; the sessions under it
+  are in no group.
 - **Session rows — 58px tall**, 4px side margin, 12px left padding, 8px rounded.
   Line one: the session's name (12.5px semibold, `foreground`; the focused one
   is `accent_foreground`), truncated. Line two: the folder it works in (`~/…`,
@@ -66,10 +73,17 @@ the Session footer, which stays pinned at the bottom.
   `N spaces · M tabs` on the right; one chip per status present (6px dot +
   `Working 3`); then the focused pane's folder as `~/…` with a folder icon and
   its branch with a git-branch icon; then the machine fold: `This Mac + 2
-  machines · 1 offline`. Opened, it lists each machine (22px row) with a server
-  icon, its name, a 6px state dot and a word: Connected (done color),
-  Connecting (working), Offline (idle); each machine folds open into its spaces
-  and their sessions, with `No spaces on this machine yet.` when empty.
+  machines · 1 offline`, with a 10px `+` at its right that opens Settings →
+  Machines. Opened, it lists each machine (22px row) with a server icon, its
+  name, a 6px state dot and a word: Connected (done color), Connecting
+  (working), Offline (idle). Their sessions are in the Sessions list.
+
+**Session bar — 30px, above the panes.** The selected session's folder at the
+left: a 12px folder icon, then its working path (`~/…`, 11.5px `muted`), a 1px
+`border` divider, then one chip per pane of the tab: an 11px title, the status
+mark and a close ×, 20px tall, 5px rounded, `selected` filled for the focused
+pane. At the right, split-right and split-down buttons. The bar follows the
+focused pane and the active tab.
 
 **Panes.** A 1px gap between panes, square corners, the `background` theme
 color; the focused pane gets a 1px `focusring` border. Each pane has a 20px
@@ -82,9 +96,17 @@ icon buttons (split right, split down, zoom/unzoom, close) that fade in over
 ## How it behaves
 
 **Sessions are not tied to Herdr's folder spaces.** They are Herdr tabs, listed
-across every local space, and ordered by the mod's own groups (a display
-concept). Selecting a session selects its space and then its tab; the row's
-folder line is the tab's working folder, not the space's name.
+across every machine, and ordered by the mod's own groups (a display concept).
+Selecting a session selects its space and then its tab — on an SSH machine the
+same click crosses machines. The row's folder line is the tab's working folder,
+not the space's name.
+
+**Automatic folder groups.** Two or more sessions on the same machine whose
+working folder is the same form an auto group. It is derived on every render
+from the panes' live `cwd`: start or close a session, or `cd` one, and it
+appears, dissolves or moves by itself. A manual group always wins: assign the
+session and it stays there. Auto group headers take no drops (nothing to
+assign); they fold like manual groups.
 
 **Agent status.** Working: a spinning ring, `working` color. Blocked: the
 `Needs you` chip (and the tag in the pane header), a `blocked` dot, sorted above
@@ -146,15 +168,15 @@ without posting. Every later change into blocked or done appends
 `hmux.inboxSeen` (set when the popup opens). The popup (320×380, 34px header,
 `Clear all`, list 346px) shows icon, title, time, `Needs your input.` /
 `Finished its work.` in the status color and `space · session`; live items
-jump to the agent when clicked, ended ones say `· Agent has ended`. Empty:
-`No new notifications.` and `When an agent finishes or needs you, it shows up
-here.`
+jump to the agent when clicked, ended ones say `· Agent has ended`, and each
+row's × removes just that entry from the shared list. Empty: `No
+notifications.` and `When an agent finishes or needs you, it shows up here.`
 
 **Motion.** Tokens only (no ms values in components): 120ms fast, 200ms base,
 320ms slow, 700ms theme fade; springs snappy (237ms, ζ0.945), smooth
-(314ms, ζ0.9), gentle (424ms, ζ0.944); spinner loop 800ms. Everything collapses
-to instant (or opacity-only 120ms) under Reduce Motion. Elapsed labels refresh
-every 30s; nothing else polls.
+(314ms, ζ0.9), gentle (424ms, ζ0.944); spinner loop 1000ms (the macOS-style
+12-spoke wheel). Everything collapses to instant (or opacity-only 120ms) under
+Reduce Motion. Elapsed labels refresh every 30s; nothing else polls.
 
 ## Built from
 
@@ -169,19 +191,21 @@ every 30s; nothing else polls.
 - `body` — `row` (divider 1px `edge`) of two children:
   - `sidebar` — `column`, 232px, min 180, max 380, background `glass`, one
     block `{mod: "hmux", props: {role: "sidebar"}}`.
-  - `work` — `column`, `resizable: false`, one block:
+  - `work` — `column`, `resizable: false`, two children:
+    `sessionbar` — `block`, 30px, background `chrome`,
+    `content {mod: "hmux", props: {role: "sessionbar"}}`; then
     `main` — `block`, background `hairline`, `content`:
     `{tab: "active", pane: {gap: 1, radius: 0, background: "background",
     lone: false, border {width: 0}, focus {width: 1, color: "focusring"},
     header {content: {mod: "hmux", props: {role: "pane"}}, height: 20,
     position: "top", reveal: "always"}}}`.
 
-**`mods/hmux`** — one View class with seven roles read from
-`props().role`: `top`, `sidebar` (default), `pane`, `inbox`, `menu`, `confirm`,
-`fade`. It imports `View, div, svg, image` from `gpui-kit`, `v_flex, h_flex,
-InputState, Input` from `gpui-base`, and from `herdr`: `agents, spaces, panes,
-focused, machines, terminals, props, run, theme, settings, appHome,
-readTextFile, writeTextFile, notify, shared, setShared, openOverlay,
+**`mods/hmux`** — one View class with eight roles read from
+`props().role`: `top`, `sessionbar`, `sidebar` (default), `pane`, `inbox`,
+`menu`, `confirm`, `fade`. It imports `View, div, svg, image` from `gpui-kit`,
+`v_flex, h_flex, InputState, Input` from `gpui-base`, and from `herdr`: `agents,
+spaces, panes, focused, machines, terminals, props, run, theme, settings,
+appHome, readTextFile, writeTextFile, notify, shared, setShared, openOverlay,
 closeOverlay, exec`. `motion.js` holds the tokens and the Reduce Motion read.
 
 State: `hmux.groups` (`[{id, name}]`), `hmux.groupOf` (`{tabId: groupId}`),
@@ -195,9 +219,9 @@ Commands it runs: `layout.toggle`, `tab.new`, `space.select`, `tab.select`,
 `space.move`, `tab.move`, `tab.rename`, `space.rename`, `tab.close`,
 `space.close` (both `confirmed: true`), `agent.focus`, `terminal.pin`,
 `terminal.peek`, `terminal.keep`, `pane.split`, `pane.zoom`, `pane.close`,
-`pane.focus`. Overlays: `hmux` (menu popup, confirm dialog, inbox popup, fade
-window `frame: "none"`), and the shipped `worktree` dialog (440×260) for New
-worktree.
+`pane.focus`, `app.settings` (the machine `+` opens `{section: "machines"}`).
+Overlays: `hmux` (menu popup, confirm dialog, inbox popup, fade window
+`frame: "none"`), and the shipped `worktree` dialog (440×260) for New worktree.
 
 Programs it starts through `exec`: `herdr-app shot` (cover), `mkdir -p` and
 `rm -f` (the snapshot folder), `open` (Reveal in Finder), `sh -c printf |
@@ -206,13 +230,14 @@ Nothing touches the network.
 
 Icons: `workspace-chrome` (plus, spinner, git-branch, folder, pin,
 chevron-right/down), `pane` (split-right/down, zoom, unzoom, close) — all
-shipped with Herdr. The mod's own six (`bell`, `sun`, `moon`, `sidebar`,
-`server`, `folder-plus`) are Lucide; see THIRD_PARTY_NOTICES.md.
+shipped with Herdr. The mod's own icons (`bell`, `sun`, `moon`, `sidebar`,
+`server`, `folder-plus`, `link`) are Lucide; `spinner-macos.svg` is original.
+See THIRD_PARTY_NOTICES.md.
 
 Themes `hmux-white.json` / `hmux-black.json`: full `ansi` + `colors`. White —
-background `#ffffff`, canvas `#f2f2f7`, chrome `#f5f5f7`, accent `#007aff`,
-blocked `#d97706`, done `#28a745`, idle `#8e8e93`, glass `#ffffffb8`, edge
-`#00000014`, wash `#f5f5f8`→`#e9e9ee`. Black — background `#1a1a1e`, canvas
+background `#ffffff`, canvas `#f2f2f2`, chrome `#f7f7f7`, accent `#3b82f6`,
+blocked `#d97706`, done `#28a745`, idle `#8e8e93`, glass `#ffffffc0`, edge
+`#00000014`, wash `#f8f8f8`→`#ededee`. Black — background `#1a1a1e`, canvas
 `#141417`, chrome `#1f1f24`, accent `#0a84ff`, blocked `#ff9f0a`, done
 `#30d158`, glass `#1e1e24b8`, edge `#ffffff14`, wash `#26262b`→`#101013`.
 
@@ -236,11 +261,19 @@ blocked `#d97706`, done `#28a745`, idle `#8e8e93`, glass `#ffffffb8`, edge
   `themes/hmux-*.json` they fall back to the built-in themes and the layout
   loses its look.
 - **Row height is a constant.** Session rows use `SESSION_H` (58px); group
-  headers, agent rows and machine rows use their own heights. Changing a
-  height without its constant misaligns drags.
+  headers, agent rows, machine rows and the session bar use their own heights.
+  Changing a height without its constant misaligns drags.
 - **The active session has no overlay:** the row itself is accent-filled (the
-  old sliding highlight was removed). Only the accent color changes when the
-  active session changes.
+  old sliding highlight was removed). The status mark keeps its meaning there:
+  a white spinner, a yellow blocked dot, a light green done dot, a half-white
+  idle dot.
+- **Auto groups are derived, never stored.** They exist only while two or more
+  sessions share a machine + folder; their fold state is the only thing kept
+  (`a:<machine>|<folder>`). They take no drops, because membership follows the
+  folder. A manual group always wins over one.
+- **The Sessions list includes SSH machines.** A session row's folder is its
+  pane's `cwd`, so a remote session shows its remote path; clicking one selects
+  that machine's space and tab. The footer's machine list is status only.
 - **Fold state** lives in localStorage `expanded`: a folded Agents section is
   `agents:off`, a folded group `g:<id>`, machines `m:*`.
 - **The fade overlay** is a separate window over everything: a layout switch
@@ -254,8 +287,6 @@ blocked `#d97706`, done `#28a745`, idle `#8e8e93`, glass `#ffffffb8`, edge
   terminals with `parent` set are shown.
 - **Rename writes only changed names.** Writing the same value would pin an auto
   name; the mod deliberately skips it.
-- **Machine sessions stay folder-shaped.** The footer's SSH machines still list
-  their spaces, then sessions; groups cover local sessions only.
 - Controls that do nothing yet: none known.
 
 ## Done when
@@ -265,22 +296,31 @@ blocked `#d97706`, done `#28a745`, idle `#8e8e93`, glass `#ffffffb8`, edge
    `"layout": "hmux"` with an errors list that has nothing about `hmux`
    (machine login errors are separate).
 3. The window shows the 32px title bar, the 232px sidebar (Agents / Sessions /
-   footer) and panes with 20px headers.
+   footer), the 30px session bar and panes.
 4. `+` adds a session immediately (no folder picker) as a loose two-line row;
    the folder line shows its working folder; the active row is accent-filled
    with a white ×, and every row's × opens the close confirmation.
 5. The Agents header folds the list; agents are one line each; right-click on
    an agent offers Delete agent, which asks and then kills that terminal.
-5. `folder-plus` adds `Group N` in edit mode; Enter saves; double-click renames;
+6. `folder-plus` adds `Group N` in edit mode; Enter saves; double-click renames;
    right-click → Delete group keeps its sessions in the loose list.
-6. Dragging a session onto a group header highlights it and files it there;
-   dragging it onto the Sessions header takes it out; dragging within a group
-   reorders it; nothing slides back.
-7. Pressing sun/moon crossfades the window in about 0.7s; Reduce Motion switches
-   at once; `settings.json`'s `appearance` flips.
-8. The bell badge matches unread entries; `Clear all` empties the list; clicking
-   a live entry focuses that agent.
-9. Splitting a pane adds a header and hover shows the four tools; they split,
-   zoom and close.
-10. `herdr-app shot` shows the traffic lights inside the 78px inset, no gaps
-    between title bar, sidebar and panes.
+7. Start two sessions in the same folder: an auto group (link icon, no fill)
+   appears and holds both; `cd` one away and it leaves. Manual groups keep
+   their fill; sessions in no group sit under the `UNGROUPED` rule, never under
+   a group header.
+8. Dragging a session onto a manual group header highlights it and files it
+   there; dragging it onto the Sessions header takes it out; dragging within a
+   group reorders it; nothing slides back.
+9. The session bar shows the focused session's folder; its pane chips focus a
+   pane on click, close it with ×, and the two buttons split right/down.
+10. A machine row shows Connected/Offline; `+` opens Settings → Machines;
+    a session on a machine appears in the Sessions list and clicking it
+    switches to that machine.
+11. Pressing sun/moon crossfades the window in about 0.7s; Reduce Motion
+    switches at once; `settings.json`'s `appearance` flips.
+12. The bell badge matches unread entries; each row's × removes just that row;
+    `Clear all` empties the list; clicking a live entry focuses that agent.
+13. Splitting a pane adds a header and hover shows the four tools; they split,
+    zoom and close.
+14. `herdr-app shot` shows the traffic lights inside the 78px inset, no gaps
+    between title bar, session bar, sidebar and panes.

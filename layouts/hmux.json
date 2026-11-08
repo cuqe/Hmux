@@ -78,6 +78,20 @@
           "resizable": false,
           "children": [
             {
+              "id": "sessionbar",
+              "type": "block",
+              "size": {
+                "px": 30
+              },
+              "background": "chrome",
+              "content": {
+                "mod": "hmux",
+                "props": {
+                  "role": "sessionbar"
+                }
+              }
+            },
+            {
               "id": "main",
               "type": "block",
               "background": "hairline",
