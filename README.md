@@ -8,11 +8,12 @@ follows a light and a dark theme, switched from the title bar with a crossfade
 instead of a hard cut.
 
 <p align="center">
-  <img src="preview.png" alt="Hmux in its light theme: the agents and sessions sidebar beside a Claude Code pane and two shell panes" width="900">
+  <img src="preview.png" alt="Hmux in its light theme: agents on top, the selected session filled blue, an SSH machine with its sessions in the footer, beside a Claude Code pane and two shell panes" width="900">
+  <br><sub>The selected session fills with the accent color. SSH machines sit in the footer with their sessions, one click away.</sub>
 </p>
 
 <p align="center">
-  <img src="docs/dark.png" alt="Hmux in its dark theme, the same panes after a drag swapped them" width="900">
+  <img src="docs/dark.png" alt="Hmux in its dark theme, the same window" width="900">
   <br><sub>The same window in <code>hmux-black</code>: press the sun/moon button and it crossfades.</sub>
 </p>
 
