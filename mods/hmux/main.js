@@ -986,7 +986,7 @@ export default class Hmux extends View {
         const cwd = shortPath(panes().find((p) => p.tab === tb.id && p.cwd)?.cwd ?? s.folder);
         const auto = s.machine ? cwd || this.tabLabel(tb) : this.tabLabel(tb);
         shownName = tb.named ? tb.name : "";
-        placeholder = tb.named ? null : auto;
+        placeholder = auto;
       } else {
         shownName = s.name;
       }
@@ -1030,6 +1030,8 @@ export default class Hmux extends View {
       .border_1()
       .border_color(t.accent)
       .shadow_sm()
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
       .on_key_down((e, cx) => {
         if (e.key !== "escape") return;
         this.commitEdit(cx, true);
