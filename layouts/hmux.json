@@ -78,20 +78,6 @@
           "resizable": false,
           "children": [
             {
-              "id": "sessionbar",
-              "type": "block",
-              "size": {
-                "px": 30
-              },
-              "background": "chrome",
-              "content": {
-                "mod": "hmux",
-                "props": {
-                  "role": "sessionbar"
-                }
-              }
-            },
-            {
               "id": "main",
               "type": "block",
               "background": "hairline",
@@ -101,7 +87,7 @@
                   "gap": 1,
                   "radius": 0,
                   "background": "background",
-                  "lone": false,
+                  "lone": true,
                   "border": {
                     "width": 0,
                     "color": "border"
@@ -117,7 +103,7 @@
                         "role": "pane"
                       }
                     },
-                    "height": 20,
+                    "height": 30,
                     "position": "top",
                     "reveal": "always"
                   }

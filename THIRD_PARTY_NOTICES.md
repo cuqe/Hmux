@@ -6,7 +6,7 @@ art in `mods/hmux/`:
 ## Lucide icons
 
 `bell.svg`, `moon.svg`, `sun.svg`, `sidebar.svg`, `server.svg`,
-`folder-plus.svg`, `link.svg`
+`folder-plus.svg`, `link.svg`, `terminal.svg`
 
 https://github.com/lucide-icons/lucide
 
@@ -54,6 +54,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Apple system folder icon
+
+`mods/hmux/folder-macos.png` is extracted from macOS
+(`GenericFolderIcon.icns` in CoreTypes.bundle) and is Apple system artwork.
+It is not covered by this repository's MIT license.
 
 ## Herdr
 

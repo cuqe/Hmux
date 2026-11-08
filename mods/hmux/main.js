@@ -30,7 +30,7 @@ const UNGROUPED = "u";
 const INBOX_MAX = 60;
 const INBOX_W = 320;
 const INBOX_H = 380;
-const INBOX_HEAD = 34;
+const INBOX_HEAD = 44;
 const DRAG_START = 4; // px the pointer travels before a press becomes a drag
 const ICON = {
   plus: "mods/workspace-chrome/plus.svg",
@@ -52,6 +52,9 @@ const ICON = {
   server: "mods/hmux/server.svg",
   folderPlus: "mods/hmux/folder-plus.svg",
   link: "mods/hmux/link.svg",
+  folderMac: "mods/hmux/folder-macos.png",
+  terminal: "mods/hmux/terminal.svg",
+  tail: "mods/hmux/popover-tail.svg",
 };
 const STATUS_LABEL = { working: "Working", blocked: "Needs you", done: "Done", idle: "Idle" };
 const INBOX_TEXT = { blocked: "Needs your input.", done: "Finished its work." };
@@ -112,17 +115,18 @@ function programIcon(p, size, color) {
 // Status mark: spinner while working (a static dot under reduced motion). On an
 // accent-filled row the marks keep their meaning: white spinner, yellow blocked,
 // light green done, a half-white idle dot.
-function statusMark(t, status, size = 10, onAccent = false) {
+function statusMark(t, status, size = 10, onAccent = false, dot = 6) {
   if (status === "working") {
     return isReduced()
-      ? div().size(6).flex_none().rounded(3).bg(onAccent ? t.accent_foreground : t.working)
+      ? div().size(dot).flex_none().rounded(dot / 2).bg(onAccent ? t.accent_foreground : t.working)
       : svg(ICON.spinner).size(size).flex_none().text_color(onAccent ? t.accent_foreground : t.working).spin(loopMs("spinner"));
   }
-  if (status === "blocked") return div().size(6).flex_none().rounded(3).bg(onAccent ? "#ffd60a" : t.blocked);
-  if (status === "done") return div().size(6).flex_none().rounded(3).bg(onAccent ? "#5ee6a0" : t.done);
+  if (status === "blocked") return div().size(dot).flex_none().rounded(dot / 2).bg(onAccent ? "#ffd60a" : t.blocked);
+  if (status === "done") return div().size(dot).flex_none().rounded(dot / 2).bg(onAccent ? "#5ee6a0" : t.done);
   if (status === "idle") {
-    const dot = div().size(5).flex_none().rounded(3).bg(onAccent ? "#ffffff" : t.idle);
-    return onAccent ? dot.opacity(0.55) : dot;
+    const d = Math.max(5, dot - 1);
+    const mark = div().size(d).flex_none().rounded(d / 2).bg(onAccent ? "#ffffff" : t.idle);
+    return onAccent ? mark.opacity(0.55) : mark;
   }
   return null;
 }
@@ -200,15 +204,20 @@ function sessionFolder(e) {
   return p?.cwd ?? e.space.folder ?? "";
 }
 
-// A session's auto-group key: its machine and its working folder.
+// A session's auto-group key: its machine and its working folder. A tab named
+// "login <machine>" belongs to that machine instead (it runs on this computer).
+const LOGIN_TAB = /^login (.+)$/;
 const autoKey = (e) => {
+  const login = LOGIN_TAB.exec(e.tab.name ?? "");
+  if (login) return `login:${login[1]}`;
   const cwd = sessionFolder(e);
   return cwd ? `${e.space.machine ?? ""}|${cwd}` : "";
 };
 
 // Sessions on the same machine working in the same folder form an automatic
 // group (two or more of them). Membership follows the folder: when a session
-// moves, it leaves and joins on its own. A manual group always wins.
+// moves, it leaves and joins on its own. A manual group always wins. A login
+// tab is always grouped, under its machine.
 function autoGroups() {
   const gof = groupOf();
   const buckets = new Map();
@@ -216,10 +225,21 @@ function autoGroups() {
     if (gof[e.tab.id]) continue;
     const key = autoKey(e);
     if (!key) continue;
-    if (!buckets.has(key)) buckets.set(key, { key, cwd: sessionFolder(e), machine: e.space.machine ?? "", entries: [] });
+    if (!buckets.has(key)) {
+      const login = key.startsWith("login:") ? key.slice(6) : null;
+      buckets.set(key, {
+        key,
+        login,
+        cwd: login ? "" : sessionFolder(e),
+        machine: login ?? (e.space.machine ?? ""),
+        entries: [],
+      });
+    }
     buckets.get(key).entries.push(e);
   }
-  return [...buckets.values()].filter((b) => b.entries.length > 1).sort((a, b) => a.cwd.localeCompare(b.cwd));
+  return [...buckets.values()]
+    .filter((b) => b.login || b.entries.length > 1)
+    .sort((a, b) => (a.login ? 1 : 0) - (b.login ? 1 : 0) || a.cwd.localeCompare(b.cwd));
 }
 
 // The sessions of one manual section (a group id or UNGROUPED), in the user's order.
@@ -281,6 +301,8 @@ function askToClose(title, body, yes, command) {
 export default class Hmux extends View {
   init(_props, cx) {
     this.hovered = false;
+    this.rowHover = null; // the session row under the pointer (shows its ×)
+    this.inboxHover = null; // the notification row under the pointer (shows its ×)
     this.drag = null; // { kind: "space" | "tab", id, scope, label, start: {x,y}, active }
     this.pending = null; // after a drop: keep the preview until the new order arrives
     this.heights = {}; // measured folder group heights, for the live preview
@@ -311,7 +333,6 @@ export default class Hmux extends View {
   render(cx) {
     const role = props()?.role ?? "sidebar";
     if (role === "top") return this.renderTop();
-    if (role === "sessionbar") return this.renderSessionBar();
     if (role === "fade") return this.renderFade();
     if (role === "pane") return this.renderPane();
     if (role === "inbox") return this.renderInbox();
@@ -328,6 +349,9 @@ export default class Hmux extends View {
     const count = unread();
     const space = spaces().find((s) => s.active);
     const tab = space?.tabs.find((tb) => tb.active);
+    const f = focused();
+    const pane = f?.pane ? panes().find((x) => x.pane === f.pane) : null;
+    const cwd = shortPath(pane?.cwd ?? f?.cwd ?? space?.folder ?? "");
     const where = space ? `${space.name}${tab ? ` · ${this.tabLabel(tab)}` : ""}` : "";
     const bell = div()
       .relative()
@@ -341,20 +365,31 @@ export default class Hmux extends View {
             .child(count > 9 ? "9+" : String(count)),
         ),
       );
+    const sideNode = findNode(layout(), "sidebar");
+    const sideW = sideNode?.hidden ? 168 : (sideNode?.size?.px ?? 232);
     return h_flex()
       .id("hmux-top")
       .on_size_change((size) => {
         this.topWidth = size.width; // the window's width in mod pixels, for the crossfade cover
       })
       .size_full()
-      .pl(78) // room for the macOS window buttons
       .pr(8)
-      .gap(2)
       .items_center()
       .text_size(11.5)
-      .child(iconButton(t, "hmux-top-sidebar", ICON.sidebar, () => run("layout.toggle", { id: "sidebar" }), 13, { active: !sidebarHidden }))
-      .child(bell)
-      .child(div().flex_1().min_w(0).px(10).truncate().text_color(t.dim).child(where))
+      // The traffic lights and the two buttons sit over the sidebar; the folder
+      // icon starts exactly at the sidebar's right edge, in line with the tabs.
+      .child(
+        h_flex().w(sideW).pl(78).pr(8).gap(2).items_center().flex_none()
+          .child(iconButton(t, "hmux-top-sidebar", ICON.sidebar, () => run("layout.toggle", { id: "sidebar" }), 13, { active: !sidebarHidden }))
+          .child(bell),
+      )
+      .child(div().flex_none().w(8))
+      .child(div().flex_none().w(1).h(16).bg(t.border))
+      .child(div().flex_none().w(8))
+      // The session's folder, like cmux: the macOS folder icon and its path.
+      .child(image(ICON.folderMac).w(14).h(14).flex_none())
+      .child(div().flex_none().max_w(300).truncate().px(6).text_color(t.muted).child(cwd))
+      .child(div().flex_1())
       .child(iconButton(t, "hmux-top-theme", settings()?.dark ? ICON.sun : ICON.moon, (_at, cx) => this.flipTheme(cx), 13))
       .child(iconButton(t, "hmux-top-new", ICON.plus, () => run("tab.new", {}), 13));
   }
@@ -386,8 +421,9 @@ export default class Hmux extends View {
       mod: "hmux",
       props: { role: "inbox" },
       kind: "popup",
+      frame: "none",
       width: INBOX_W,
-      height: INBOX_H,
+      height: INBOX_H + 8,
       at: at ? { x: at.x - 12, y: at.y + 14 } : "pointer",
     });
   }
@@ -462,140 +498,136 @@ export default class Hmux extends View {
       .child(image(p.image).w(p.width).h(p.height));
   }
 
-  // ── session bar ────────────────────────────────────────────────────────────
-  // Above the panes: the session's folder, then one chip per pane of its tab.
-  renderSessionBar() {
-    const t = theme();
-    const f = focused();
-    const pane = f?.pane ? panes().find((x) => x.pane === f.pane) : null;
-    const space = spaces().find((s) => s.active);
-    const tab = space?.tabs.find((tb) => tb.active);
-    const cwd = shortPath(pane?.cwd ?? f?.cwd ?? space?.folder ?? "");
-    const list = tab ? panes().filter((x) => x.tab === tab.id) : [];
-    return h_flex()
-      .id("hmux-sessionbar")
-      .size_full()
-      .px(10)
-      .gap(8)
-      .items_center()
-      .text_size(11.5)
-      .child(svg(ICON.folder).size(12).flex_none().text_color(t.muted))
-      .child(div().flex_none().max_w(240).truncate().text_color(t.muted).child(cwd))
-      .child(div().flex_none().w(1).h(14).bg(t.border))
-      .child(h_flex().flex_1().min_w(0).gap(2).items_center().children(list.map((p) => this.paneTab(t, p))))
-      .child(iconButton(t, "hmux-sb-split", ICON.splitRight, () => run("pane.split", { direction: "right" }), 11))
-      .child(iconButton(t, "hmux-sb-split-down", ICON.splitDown, () => run("pane.split", { direction: "down" }), 11));
-  }
-
-  // One pane as a tab: title, status and a close ×; the active pane is filled.
-  paneTab(t, p) {
-    const active = Boolean(p.focused);
-    const name = ((p.program?.agent || p.program?.shell) && p.program.name) || clean(p.title) || p.program?.name || "shell";
-    const close = div()
-      .id(`hmux-sbtab-x-${p.pane}`)
-      .flex_none()
-      .p(2)
-      .rounded(3)
-      .hover((s) => s.bg(t.hover))
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .on_click((_e, cx) => {
-        cx.stop_propagation();
-        run("pane.close", { pane: p.pane });
-      })
-      .child(svg(ICON.close).size(8).flex_none().text_color(t.dim));
-    return h_flex()
-      .id(`hmux-sbtab-${p.pane}`)
-      .h(20)
-      .px(7)
-      .gap(5)
-      .items_center()
-      .rounded(5)
-      .flex_none()
-      .when(active, (el) => el.bg(t.selected))
-      .when(!active, (el) => el.hover((s) => s.bg(t.hover)))
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .on_click(() => run("pane.focus", { pane: p.pane }))
-      .child(div().max_w(150).truncate().text_size(11).text_color(active ? t.foreground : t.muted).child(name))
-      .when(Boolean(statusMark(t, p.status, 8)), (el) => el.child(statusMark(t, p.status, 8)))
-      .child(close);
-  }
-
   // ── notifications popup ────────────────────────────────────────────────────
   renderInbox() {
     const t = theme();
     const items = inbox();
     const live = new Set(agents().map((a) => a.address));
+    const badge = items.length
+      ? div()
+        .flex_none()
+        .min_w(18)
+        .h(18)
+        .px(5)
+        .rounded(9)
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(t.accent)
+        .text_size(10)
+        .font_semibold()
+        .text_color(t.accent_foreground)
+        .child(String(items.length))
+      : div();
     const clear = div()
       .id("hmux-inbox-clear")
-      .px(6)
-      .py(2)
-      .rounded(4)
-      .text_size(11)
+      .h(26)
+      .px(11)
+      .rounded(7)
+      .flex()
+      .items_center()
+      .bg(t.foreground + "0d")
+      .text_size(11.5)
       .text_color(t.muted)
-      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .hover((s) => s.bg(t.foreground + "16").text_color(t.foreground))
       .on_click(() => setShared(INBOX_KEY, []))
       .child("Clear all");
-    return v_flex()
+    return div()
       .id("hmux-inbox")
+      .relative()
       .w_full()
-      .h(INBOX_H)
-      .bg(t.popover)
-      .text_size(12)
-      .text_color(t.foreground)
+      .h(INBOX_H + 8)
       .child(
-        h_flex().h(INBOX_HEAD).px(12).items_center().flex_none().border_b(1).border_color(t.border)
-          .child(div().flex_1().font_semibold().child("Notifications"))
+        v_flex()
+          .id("hmux-inbox-panel")
+          .mt(8)
+          .w_full()
+          .h(INBOX_H)
+          .rounded(12)
+          .bg(t.popover)
+          .border_1()
+          .border_color(t.border)
+          .shadow_lg()
+          .overflow_hidden()
+          .text_size(12)
+          .text_color(t.foreground)
+      .child(
+        h_flex().h(INBOX_HEAD).px(14).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
+          .child(div().font_semibold().text_size(13).child("Notifications"))
+          .child(badge)
+          .child(div().flex_1())
           .when(items.length > 0, (el) => el.child(clear)),
       )
       .child(
         items.length
-          ? v_flex().id("hmux-inbox-list").w_full().h(INBOX_H - INBOX_HEAD).flex_none().overflow_y_scrollbar().py(4).children(
+          ? v_flex().id("hmux-inbox-list").w_full().h(INBOX_H - INBOX_HEAD).flex_none().overflow_y_scrollbar().children(
             items.map((n) => {
-              const pic = n.icon ? (n.tint ? svg(n.icon).size(14).flex_none().text_color(t.muted) : image(n.icon).w(14).h(14).flex_none()) : div().size(14).flex_none();
               const alive = live.has(n.address);
+              const hovered = this.inboxHover === n.id;
+              const pic = n.icon
+                ? n.tint
+                  ? svg(n.icon).size(16).flex_none().text_color(t.muted)
+                  : image(n.icon).w(16).h(16).flex_none()
+                : div().size(16).flex_none();
               return h_flex()
                 .id(`hmux-inbox-${n.id}`)
-                .mx(4)
-                .px(8)
-                .py(6)
+                .relative()
+                .pl(12)
+                .pr(10)
+                .py(7)
                 .gap(8)
-                .items_start()
-                .rounded(5)
-                .when(alive, (el) => el.hover((s) => s.bg(t.hover)))
+                .items_center()
+                .when(hovered, (el) => el.bg(t.hover))
+                .on_hover((h, cx) => {
+                  this.inboxHover = h ? n.id : this.inboxHover === n.id ? null : this.inboxHover;
+                  cx.notify();
+                })
                 .on_click(() => {
                   if (!alive) return;
                   run("agent.focus", { terminal: n.address });
                   closeOverlay(props().overlay);
                 })
-                .child(div().pt(1).child(pic))
+                .child(pic)
                 .child(
-                  v_flex().flex_1().min_w(0).gap(1)
-                    .child(h_flex().gap(6).items_center()
-                      .child(div().flex_1().min_w(0).truncate().font_medium().child(n.title))
-                      .child(div().flex_none().text_size(10.5).text_color(t.dim).child(clock(n.at))))
-                    .child(div().text_size(11).text_color(n.status === "blocked" ? t.blocked : t.done).child(INBOX_TEXT[n.status] ?? ""))
-                    .child(div().truncate().text_size(10.5).text_color(t.dim).child(alive ? n.where : `${n.where} · Agent has ended`)),
+                  v_flex().flex_1().min_w(0).gap(2)
+                    .child(
+                      h_flex().gap(8).items_center().min_w(0)
+                        .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().child(n.title))
+                        .child(div().flex_none().text_size(11).text_color(t.dim).child(clock(n.at))),
+                    )
+                    .child(div().truncate().text_size(11).text_color(t.dim).child(alive ? n.where : `${n.where} · ended`))
+                    .child(div().text_size(11).text_color(t.dim).child(INBOX_TEXT[n.status] ?? "")),
                 )
-                .child(
-                  div()
-                    .id(`hmux-inbox-x-${n.id}`)
-                    .flex_none()
-                    .p(2)
-                    .rounded(3)
-                    .hover((s) => s.bg(t.hover))
-                    .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-                    .on_click((_e, cx) => {
-                      cx.stop_propagation();
-                      setShared(INBOX_KEY, inbox().filter((x) => x.id !== n.id));
-                    })
-                    .child(svg(ICON.close).size(9).flex_none().text_color(t.dim)),
+                // The delete button only shows under the pointer, centered.
+                .when(hovered, (el) =>
+                  el.child(
+                    div()
+                      .id(`hmux-inbox-x-${n.id}`)
+                      .flex_none()
+                      .size(18)
+                      .rounded(9)
+                      .flex()
+                      .items_center()
+                      .justify_center()
+                      .bg(t.foreground + "14")
+                      .hover((s) => s.bg(t.foreground + "26"))
+                      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+                      .on_click((_e, cx) => {
+                        cx.stop_propagation();
+                        setShared(INBOX_KEY, inbox().filter((x) => x.id !== n.id));
+                      })
+                      .child(svg(ICON.close).size(9).flex_none().text_color(t.muted)),
+                  ),
                 );
             }),
           )
           : v_flex().w_full().h(INBOX_H - INBOX_HEAD).flex_none().p(16).gap(4).items_center().justify_center().text_color(t.dim)
             .child(div().child("No new notifications."))
             .child(div().text_size(11).child("When an agent finishes or needs you, it shows up here.")),
-      );
+      )
+      )
+      .child(div().absolute().top(0).left(16).child(svg(ICON.tail).w(24).h(12).flex_none().text_color(t.border)))
+      .child(div().absolute().top(2).left(18).child(svg(ICON.tail).w(20).h(10).flex_none().text_color(t.popover)));
   }
 
   // ── right-click menus ──────────────────────────────────────────────────────
@@ -1156,7 +1188,7 @@ export default class Hmux extends View {
     const key = `a:${a.key}`;
     const open = this.expanded.has(key);
     const entries = autoSessions(a.key);
-    const label = `${shortPath(a.cwd)}${a.machine ? ` · ${a.machine}` : ""}`;
+    const label = a.login ? `${a.login} · login` : `${shortPath(a.cwd)}${a.machine ? ` · ${a.machine}` : ""}`;
     const head = h_flex()
       .id(`hmux-auto-${a.key}`)
       .mx(4)
@@ -1166,6 +1198,7 @@ export default class Hmux extends View {
       .gap(5)
       .items_center()
       .rounded(5)
+      .bg(t.foreground + "0d")
       .hover((st) => st.bg(t.hover))
       .on_mouse_up("left", (e, cx) => {
         if (this.drag?.active) return;
@@ -1174,7 +1207,7 @@ export default class Hmux extends View {
         cx.notify();
       })
       .child(svg(open ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim))
-      .child(svg(ICON.link).size(10).flex_none().text_color(t.dim))
+      .child(a.login ? svg(ICON.server).size(11).flex_none().text_color(t.dim) : image(ICON.folderMac).w(12).h(12).flex_none())
       .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(label))
       .when(!open, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(`${entries.length}`)));
     return v_flex().child(head).when(open, (el) => el.child(this.rowsBlock(t, key)));
@@ -1216,7 +1249,7 @@ export default class Hmux extends View {
         openMenu({ kind: "group", id: g.id }, e.position);
       })
       .child(svg(open ? ICON.chevronDown : ICON.chevronRight).size(10).flex_none().text_color(t.dim))
-      .child(svg(ICON.folder).size(11).flex_none().text_color(t.muted))
+      .child(image(ICON.folderMac).w(12).h(12).flex_none())
       .when(Boolean(editing), (el) => el.child(editing))
       .when(!editing, (el) => el.child(div().flex_1().min_w(0).truncate().font_semibold().text_color(t.muted).child(g.name)))
       .when(!open, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(`${entries.length}`)));
@@ -1264,13 +1297,13 @@ export default class Hmux extends View {
     return clean(lead?.title) || lead?.program?.name || `Command ${tb.index}`;
   }
 
-  // A session row: name on top, its folder below, working time at the right of the name.
-  // The active session fills with accent; its close button sits at the right edge.
+  // A session row: name on top, its folder below, working time at the right of
+  // the name. The active session fills with accent. No close button: the status
+  // mark takes that spot, larger (right-click → Close session still closes it).
   tabRow(t, s, tb, siblings, opts = {}) {
     const here = tb.active && s.active;
     const splits = tb.panes > 1 ? `${tb.panes} splits` : "";
     const label = this.tabLabel(tb);
-    const working = Boolean(tb.working_since);
     const time = elapsed(tb.working_since ?? tb.changed_at);
     const cwd = shortPath(panes().find((p) => p.tab === tb.id && p.cwd)?.cwd ?? s.folder);
     const editing = this.editor(t, "tab", tb.id);
@@ -1280,30 +1313,40 @@ export default class Hmux extends View {
       if (!s.active) run("space.select", { id: s.id });
       run("tab.select", { id: tb.id });
     };
-    const close = div()
+    const mark = statusMark(t, tb.status, 14, here, 8);
+    const hovered = this.rowHover === tb.id;
+    const closeBox = div()
       .id(`hmux-tab-x-${tb.id}`)
       .flex_none()
-      .p(4)
-      .rounded(4)
-      .hover((st) => st.bg(here ? "#ffffff26" : t.hover))
+      .size(18)
+      .rounded(9)
+      .flex()
+      .items_center()
+      .justify_center()
+      .bg(here ? "#ffffff26" : t.foreground + "12")
+      .hover((st) => st.bg(here ? "#ffffff40" : t.foreground + "24"))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => {
         cx.stop_propagation();
         askToClose("Close this session?", "Its terminals and agents will end. This can't be undone.", "Close session", { name: "tab.close", args: { id: tb.id, confirmed: true } });
       })
-      .child(svg(ICON.close).size(10).text_color(here ? t.accent_foreground : t.dim));
+      .child(svg(ICON.close).size(9).flex_none().text_color(here ? t.accent_foreground : t.muted));
     const row = h_flex()
       .id(`hmux-tab-${tb.id}-${this.gen}`)
       .h(SESSION_H)
       .mx(4)
       .pl(12)
-      .pr(6)
+      .pr(10)
       .py(7)
-      .gap(6)
+      .gap(8)
       .items_center()
       .rounded(8)
       .when(here, (el) => el.bg(t.accent))
       .when(!here, (el) => el.hover((st) => st.bg(t.hover)))
+      .on_hover((h, cx) => {
+        this.rowHover = h ? tb.id : this.rowHover === tb.id ? null : this.rowHover;
+        cx.notify();
+      })
       .child(
         v_flex()
           .flex_1()
@@ -1318,11 +1361,11 @@ export default class Hmux extends View {
             h_flex().gap(8).items_center().min_w(0)
               .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(sub).opacity(here ? 0.8 : 1).child(cwd))
               .when(Boolean(splits), (el) => el.child(div().flex_none().text_size(9.5).text_color(sub).opacity(here ? 0.7 : 1).child(splits)))
-              .child(div().flex_none().text_size(9.5).text_color(sub).opacity(here ? 0.7 : 1).child(time))
-              .when(Boolean(statusMark(t, tb.status, 9, here)), (el) => el.child(statusMark(t, tb.status, 9, here))),
+              .child(div().flex_none().text_size(9.5).text_color(sub).opacity(here ? 0.7 : 1).child(time)),
           ),
       )
-      .child(close);
+      .when(hovered, (el) => el.child(closeBox))
+      .when(!hovered && Boolean(mark), (el) => el.child(mark));
     return this.draggable(row, t, {
       kind: "tab",
       id: tb.id,
@@ -1377,6 +1420,16 @@ export default class Hmux extends View {
         .rounded(5)
         .text_size(11.5)
         .hover((s) => s.bg(t.hover))
+        .on_click(() => {
+          if (m.layout === "unavailable") {
+            // Offline: open the core's login prompt in a fresh session, so the
+            // password (or code) can be typed right here.
+            run("tab.new", { argv: ["hc", "machine", "login", m.name], name: `login ${m.name}` });
+          } else {
+            const first = spaces().find((s) => s.machine === m.name);
+            if (first) run("space.select", { id: first.id });
+          }
+        })
         .child(svg(ICON.server).size(11).flex_none().text_color(t.muted))
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(m.name))
         .child(div().size(6).flex_none().rounded(3).bg(tone[m.layout] ?? t.idle))
@@ -1438,46 +1491,51 @@ export default class Hmux extends View {
       .child(this.machinesBlock(t));
   }
 
-  // ── pane header ────────────────────────────────────────────────────────────
+  // ── pane header: one cmux-style tab ────────────────────────────────────────
+  // Terminal glyph, title, ×, then the pane tools; the focused pane is the page
+  // color with a 2px accent line along its top.
   renderPane() {
     const t = theme();
     const p = panes().find((x) => x.pane === props()?.pane);
     if (!p) return div();
     const pane = p.pane;
     const name = ((p.program?.agent || p.program?.shell) && p.program.name) || clean(p.title) || p.program?.name || "shell";
-    const pic = programIcon(p.program, 11, p.focused ? t.muted : t.dim);
-    const fade = transition("fast", "out", { opacityOnly: true });
+    const close = div()
+      .id(`hmux-pane-x-${pane}`)
+      .flex_none()
+      .p(2)
+      .rounded(3)
+      .hover((s) => s.bg(t.foreground + "14"))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        run("pane.close", { pane });
+      })
+      .child(svg(ICON.close).size(9).flex_none().text_color(p.focused ? t.muted : t.dim));
     return h_flex()
       .id(`hmux-pane-${pane}`)
       .size_full()
-      .px(8)
+      .px(10)
       .gap(6)
       .items_center()
-      .bg(p.focused ? t.chrome : t.background)
+      .bg(p.focused ? t.background : t.chrome)
+      .when(p.focused, (el) => el.border_t(2).border_color(t.accent))
       .border_b(1)
       .border_color(t.border)
       .text_size(11)
-      .on_hover((hovered, cx) => {
-        this.hovered = hovered;
-        cx.notify();
-      })
       .on_click(() => run("pane.focus", { pane }))
-      .when(Boolean(pic), (el) => el.child(pic))
+      .child(svg(ICON.terminal).size(11).flex_none().text_color(p.focused ? t.foreground : t.dim))
       .child(div().flex_none().max_w(220).truncate().font_medium().text_color(p.focused ? t.foreground : t.muted).child(name))
-      .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(shortPath(p.cwd)))
-      .when(p.status === "blocked", (el) => el.child(div().flex_none().text_size(10).font_semibold().text_color(t.blocked).child(STATUS_LABEL.blocked)))
-      .child(statusMark(t, p.status, 9) ?? div())
+      .child(close)
+      .child(div().flex_1())
       .child(
         h_flex()
           .id(`hmux-pane-tools-${pane}`)
           .flex_none()
           .gap(1)
-          .opacity(this.hovered ? 1 : 0)
-          .transition("opacity", fade)
           .child(iconButton(t, `hmux-pr-${pane}`, ICON.splitRight, () => run("pane.split", { direction: "right", pane }), 11))
           .child(iconButton(t, `hmux-pd-${pane}`, ICON.splitDown, () => run("pane.split", { direction: "down", pane }), 11))
-          .child(iconButton(t, `hmux-pz-${pane}`, p.zoomed ? ICON.unzoom : ICON.zoom, () => run("pane.zoom", { pane }), 11))
-          .child(iconButton(t, `hmux-px-${pane}`, ICON.close, () => run("pane.close", { pane }), 11)),
+          .child(iconButton(t, `hmux-pz-${pane}`, p.zoomed ? ICON.unzoom : ICON.zoom, () => run("pane.zoom", { pane }), 11)),
       );
   }
 }

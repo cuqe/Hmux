@@ -15,8 +15,9 @@ session menu uses Finder and `pbcopy`).
 ## What you get
 
 - **Title bar (32px):** sidebar toggle, notification bell with an unread badge,
-  the current space · session, sun/moon theme switch, new session. Drag the
-  window by this bar; double-click maximizes.
+  a divider, then the macOS folder icon and the selected session's working path
+  — aligned with the pane tabs below. On the right, the sun/moon theme switch
+  and new session. Drag the window by this bar; double-click maximizes.
 - **Agents:** one compact line per agent with its program icon and status; the
   header folds the whole section. Pinned agents stay on top, then by urgency:
   needs you, done, working, idle. Sub-agents nest under the agent that started
@@ -27,25 +28,30 @@ session menu uses Finder and `pbcopy`).
   - The folder-plus button next to it creates a **group** (shaded, with a folder
     icon).
   - Sessions that share a working folder on the same machine form an **auto
-    group** on their own (link icon, no fill). It appears and dissolves as
-    sessions start, end or `cd` — no setup. A session you put in a manual group
-    stays there.
+    group** on their own (macOS folder icon, same shade as a manual group). It
+    appears and dissolves as sessions start, end or `cd` — no setup. A session
+    you put in a manual group stays there. A machine login tab is always grouped
+    under `<machine> · login`.
   - Sessions in no group sit below an `UNGROUPED` rule, so they never read as a
     group's children.
   - SSH sessions are in the same list too; click one to switch straight to it.
   - Each session is a two-line row: its name, then the folder it works in, with
-    the working time on the right. The active session is filled with the accent
-    color (white text) and carries a close ×; every row has its own ×.
+    the working time on the right and its status mark at the far right (a 14px
+    spinner while working). Hover a row and the mark becomes an × that closes
+    it (with a confirmation). The active session is filled with the accent
+    color and white text.
   - **Drag a session onto a group header** to file it there; drag it onto the
     Sessions header to take it back out. Dragging inside a group reorders it.
   - Click a group to fold it; double-click to rename; right-click for Rename
     and Delete (deleting a group keeps its sessions, ungrouped).
-- **Session bar:** above the panes, the selected session's folder icon and
-  working path, then one chip per pane of its tab (click to focus, × to close)
-  and split buttons at the right.
+- **Pane tabs:** each pane carries its own cmux-style tab bar — terminal glyph,
+  title, ×, then split and zoom tools; the focused tab is white with a thin
+  accent line on top.
 - **Session footer:** status counts, the focused pane's folder and branch, and
-  `This Mac + N` — each SSH machine with its connection state, plus a `+` that
-  opens Settings → Machines to add a connection.
+  `This Mac + N` — each SSH machine with its connection state. Click an offline
+  machine to open its login prompt (type the password or code right there; that
+  session stays under `<machine> · login`), a connected one to jump to its
+  first space; the `+` opens Settings → Machines to add a connection.
 - **Panes:** a 20px header with the program, folder, branch and status; on
   hover, split right/down, zoom and close.
 - **Right-click a session:** go to it, rename, reset the name, split right or
@@ -56,7 +62,9 @@ session menu uses Finder and `pbcopy`).
   the theme underneath and fades the picture out in 0.7s. Reduce Motion is
   respected.
 - **Notifications:** agents that turn "needs you" or "done" land in the bell's
-  popup; click one to jump to that agent, or its × to drop just that entry.
+  popup (a sheet with a small tail under the bell). Each row shows the agent's
+  logo; click it to jump to that agent, or hover and use the × that appears to
+  drop just that entry.
 
 ## Install
 

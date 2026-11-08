@@ -45,11 +45,11 @@
     "done": "#30d158",
     "idle": "#8e8e93",
     "unknown": "#8e8e93",
-    "glass": "#1e1e24b8",
+    "glass": "#1e1e23",
     "hairline": "#33333a",
     "edge": "#ffffff14",
     "focusring": "#0a84ff99",
-    "wash_top": "#26262b",
-    "wash_bottom": "#101013"
+    "wash_top": "#1a1a1e",
+    "wash_bottom": "#1a1a1e"
   }
 }
