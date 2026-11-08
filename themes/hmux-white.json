@@ -1,7 +1,7 @@
 {
   "background": "#ffffff",
   "foreground": "#1f2328",
-  "selection": "#b8d3ff",
+  "selection": "#d7e6ff",
   "cursor": "#3b82f6",
   "ansi": [
     "#24292f",
@@ -39,7 +39,7 @@
     "accent_foreground": "#ffffff",
     "solid": "#1f2328",
     "solid_foreground": "#ffffff",
-    "selection": "#b8d3ff",
+    "selection": "#d7e6ff",
     "working": "#3b82f6",
     "blocked": "#d97706",
     "done": "#28a745",

@@ -61,10 +61,12 @@ session menu uses Finder and `pbcopy`).
   design as the list (name, folder and time; accent-filled when active, hover ×
   to close). An unnamed tab shows its **current path** (so new spaces never all
   read `Command 1`); double-click its title to rename it — a set name stays put
-  when the path changes, clearing it brings the path back, and clicking
-  anywhere else saves. The list scrolls, and `Cmd-1`…`Cmd-9` follow the focus:
-  on a normal session they pick the Nth tab of that space, on an SSH session
-  the Nth session of that machine.
+  when the path changes, clearing it brings the path back (shown greyed as a
+  placeholder while you edit), and clicking anywhere else saves. The list
+  scrolls, and `Cmd-1`…`Cmd-9` follow the focus: on a normal session they pick
+  the Nth session of the group/folder it is shown in (in list order, so
+  reordering and moving update them), on an SSH session the Nth session of
+  that machine.
 - **Panes:** a 20px header with the program, folder, branch and status; on
   hover, split right/down, zoom and close.
 - **Right-click a session:** go to it, rename, reset the name, split right or

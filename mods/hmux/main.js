@@ -346,8 +346,24 @@ export default class Hmux extends View {
               run("tab.select", { id: pick.tab.id });
             }
           } else {
-            // A normal session: the Nth tab of this space.
-            run("tab.select", { index: n });
+            // A normal session: the Nth session of the section it is shown in
+            // (its group, its folder group, or the loose list), in list order.
+            const tb = cur.tabs.find((x) => x.active);
+            if (tb) {
+              const gof = groupOf();
+              let section = UNGROUPED;
+              if (gof[tb.id]) section = gof[tb.id];
+              else {
+                const e = allSessions().find((x) => x.tab.id === tb.id);
+                const key = e ? autoKey(e) : "";
+                section = key && autoGroups().some((b) => b.key === key) ? `a:${key}` : UNGROUPED;
+              }
+              const pick = sectionEntries(section)[n - 1];
+              if (pick) {
+                if (!pick.space.active) run("space.select", { id: pick.space.id });
+                run("tab.select", { id: pick.tab.id });
+              }
+            }
           }
           cx.notify();
         }
@@ -955,7 +971,8 @@ export default class Hmux extends View {
   // Space names are Herdr's labels only (space.rename): the folder on disk keeps its name.
   // Group names are the mod's own state.
   startEdit(kind, id, cx) {
-    let shownName;
+    let shownName = "";
+    let placeholder = null;
     if (kind === "group") {
       const g = groups().find((x) => x.id === id);
       if (!g) return;
@@ -967,14 +984,16 @@ export default class Hmux extends View {
       if (!s || (kind === "tab" && !tb)) return;
       if (kind === "tab") {
         const cwd = shortPath(panes().find((p) => p.tab === tb.id && p.cwd)?.cwd ?? s.folder);
-        shownName = tb.named ? tb.name : s.machine ? cwd || this.tabLabel(tb) : this.tabLabel(tb);
+        const auto = s.machine ? cwd || this.tabLabel(tb) : this.tabLabel(tb);
+        shownName = tb.named ? tb.name : "";
+        placeholder = tb.named ? null : auto;
       } else {
         shownName = s.name;
       }
     }
-    // Starts from the name shown in the list.
-    const input = InputState.new({});
-    input.set_value(shownName);
+    // A named tab starts with its name; an unnamed one starts empty and shows
+    // the automatic name as a placeholder.
+    const input = InputState.new(placeholder ? { placeholder, value: shownName } : { value: shownName });
     this.edit = { kind, id, input, done: false, original: shownName };
     input.on("submit", (_e, cx) => this.commitEdit(cx));
     input.on("blur", (_e, cx) => this.commitEdit(cx));
@@ -986,7 +1005,8 @@ export default class Hmux extends View {
     if (!e || e.done) return;
     e.done = true;
     const name = e.input.value().trim();
-    // Unchanged: leave it alone, so an automatic name keeps following its folder or agent.
+    // An empty name clears it back to the automatic one; an unchanged name is
+    // left alone, so an automatic name keeps following its folder or agent.
     if (!cancel && name !== e.original) {
       if (e.kind === "group") setGroups(groups().map((g) => (g.id === e.id ? { ...g, name } : g)));
       else run(e.kind === "tab" ? "tab.rename" : "space.rename", { id: e.id, name });
@@ -1010,8 +1030,6 @@ export default class Hmux extends View {
       .border_1()
       .border_color(t.accent)
       .shadow_sm()
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
       .on_key_down((e, cx) => {
         if (e.key !== "escape") return;
         this.commitEdit(cx, true);
