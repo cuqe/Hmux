@@ -223,7 +223,8 @@ Reduce Motion. Elapsed labels refresh every 30s; nothing else polls.
 - root look: `theme {light: "hmux-white", dark: "hmux-black"}`, font Menlo 13px,
   ui font Geist, `terminal_padding [4,6]`, `titlebar "none"`,
   `traffic_lights [12,10]`, background gradient `[wash_top, wash_bottom]` at
-  160°, `preview "layouts/hmux.svg"`.
+  160°, `preview "layouts/hmux.svg"`, and `colors.selection #9ec5ff` so text selected
+in inputs and terminals reads clearly.
 - `body` — `row`, 1px `border` divider, two children:
   - `sidebar` — `column`, 232px, min 180, max 380, background `glass`:
     - `sidebar-top` — `block`, 32px, `window_drag: true`, background `glass`,

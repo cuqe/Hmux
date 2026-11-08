@@ -61,8 +61,9 @@ session menu uses Finder and `pbcopy`).
   design as the list (name, folder and time; accent-filled when active, hover ×
   to close). An unnamed tab shows its **current path** (so new spaces never all
   read `Command 1`); double-click its title to rename it — a set name stays put
-  when the path changes, clearing it brings the path back (shown greyed as a
-  placeholder while you edit), and clicking anywhere else saves. The list
+  when the path changes, clearing it brings the original automatic name back
+  (shown greyed as a placeholder while you edit — the path for SSH sessions,
+  the agent/Command name for local ones), and clicking anywhere else saves. The list
   scrolls, and `Cmd-1`…`Cmd-9` follow the focus: on a normal session they pick
   the Nth session of the group/folder it is shown in (in list order, so
   reordering and moving update them), on an SSH session the Nth session of
@@ -78,8 +79,8 @@ session menu uses Finder and `pbcopy`).
   respected.
 - **Notifications:** agents that turn "needs you" or "done" land in the bell's
   popup (a sheet with a small tail under the bell). Each row shows the agent's
-  logo; click it to jump to that agent, or hover and use the × that appears to
-  drop just that entry.
+  logo, with its time against the right edge; hover swaps the time for an ×
+  that drops just that entry.
 
 ## Install
 

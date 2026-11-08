@@ -129,5 +129,8 @@
         }
       ]
     }
-  ]
+  ],
+  "colors": {
+    "selection": "#9ec5ff"
+  }
 }

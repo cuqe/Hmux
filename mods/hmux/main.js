@@ -650,7 +650,7 @@ export default class Hmux extends View {
                 .id(`hmux-inbox-${n.id}`)
                 .relative()
                 .pl(12)
-                .pr(8)
+                .pr(6)
                 .py(7)
                 .gap(4)
                 .items_center()
@@ -670,26 +670,26 @@ export default class Hmux extends View {
                     .child(
                       h_flex().gap(8).items_center().min_w(0)
                         .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().child(n.title))
-                        .child(div().flex_none().text_size(11).text_color(t.dim).child(clock(n.at))),
+                        .when(!hovered, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(clock(n.at)))),
                     )
                     .child(div().truncate().text_size(11).text_color(t.dim).child(alive ? n.where : `${n.where} · ended`))
                     .child(div().text_size(11).text_color(t.dim).child(INBOX_TEXT[n.status] ?? "")),
                 )
-                // The × column is always reserved, so the time never moves; the
-                // button itself only shows under the pointer.
-                .child(
-                  div()
-                    .flex_none()
-                    .size(16)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when(hovered, (el) =>
-                      el.child(
+                // Hovering swaps the time for the delete button, right at the wall.
+                .when(hovered, (el) =>
+                  el.child(
+                    div()
+                      .absolute()
+                      .right(6)
+                      .top(0)
+                      .bottom(0)
+                      .flex()
+                      .items_center()
+                      .child(
                         div()
                           .id(`hmux-inbox-x-${n.id}`)
                           .size(16)
-                          .rounded(9)
+                          .rounded(8)
                           .flex()
                           .items_center()
                           .justify_center()
@@ -702,7 +702,7 @@ export default class Hmux extends View {
                           })
                           .child(svg(ICON.close).size(9).flex_none().text_color(t.muted)),
                       ),
-                    ),
+                  ),
                 );
             }),
           )
@@ -984,7 +984,7 @@ export default class Hmux extends View {
       if (!s || (kind === "tab" && !tb)) return;
       if (kind === "tab") {
         const cwd = shortPath(panes().find((p) => p.tab === tb.id && p.cwd)?.cwd ?? s.folder);
-        const auto = s.machine ? cwd || this.tabLabel(tb) : this.tabLabel(tb);
+        const auto = s.machine ? cwd || this.autoTabLabel(tb) : this.autoTabLabel(tb);
         shownName = tb.named ? tb.name : "";
         placeholder = auto;
       } else {
@@ -1428,11 +1428,16 @@ export default class Hmux extends View {
     this.saveExpanded();
   }
 
+  // The automatic name, ignoring any custom one (used by the rename placeholder).
+  autoTabLabel(tb) {
+    const lead = agents().find((a) => a.tab === tb.id);
+    return clean(lead?.title) || lead?.program?.name || `Command ${tb.index}`;
+  }
+
   // Unnamed sessions are called by their index: use the agent's title.
   tabLabel(tb) {
     if (tb.named) return tb.name;
-    const lead = agents().find((a) => a.tab === tb.id);
-    return clean(lead?.title) || lead?.program?.name || `Command ${tb.index}`;
+    return this.autoTabLabel(tb);
   }
 
   // A session row: name on top, its folder below, working time at the right of
