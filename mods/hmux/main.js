@@ -11,7 +11,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import {
   agents, spaces, panes, focused, machines, terminals, props, run, theme, themes, home, layout, setAgentOrder,
-  settings, appHome, readTextFile, writeTextFile, notify, shared, setShared, openOverlay, closeOverlay, exec,
+  settings, appHome, readTextFile, writeTextFile, notify, shared, setShared, openOverlay, closeOverlay, exec, nextCommand,
 } from "herdr";
 import { detectReducedMotion, isReduced, transition, spring, loopMs, durationMs, fadeDelay, fadeTotalMs } from "./motion.js";
 
@@ -326,6 +326,27 @@ export default class Hmux extends View {
     });
     const role = props()?.role;
     if (role === "top") exec("rm", ["-f", `${appHome()}/mods/hmux/.morph-backup.json`]).catch(() => {}); // the old morph's leftover
+    // cmd-1…cmd-9: jump to the Nth machine session (machines in order).
+    if ((role ?? "sidebar") === "sidebar") {
+      cx.spawn(async (cx) => {
+        for (;;) {
+          const command = String((await nextCommand()) ?? "");
+          const m = /^selectMachine:(\d+)$/.exec(command);
+          if (!m) continue;
+          const list = [];
+          for (const mm of machines().filter((x) => x.name)) {
+            for (const sp of spaces()) if (sp.machine === mm.name) for (const tb of sp.tabs) list.push({ space: sp, tab: tb });
+            const login = localTabs().find((e) => e.tab.name === `login ${mm.name}`);
+            if (login) list.push(login);
+          }
+          const pick = list[Number(m[1]) - 1];
+          if (!pick) continue;
+          if (!pick.space.active) run("space.select", { id: pick.space.id });
+          run("tab.select", { id: pick.tab.id });
+          cx.notify();
+        }
+      });
+    }
     if (role === "fade") this.startFade(cx);
     if (role === "confirm") {
       this.handle = cx.focus_handle();
@@ -937,7 +958,12 @@ export default class Hmux extends View {
       const s = kind === "space" ? all.find((x) => x.id === id) : all.find((x) => x.tabs.some((tb) => tb.id === id));
       const tb = kind === "tab" ? s?.tabs.find((x) => x.id === id) : null;
       if (!s || (kind === "tab" && !tb)) return;
-      shownName = kind === "tab" ? this.tabLabel(tb) : s.name;
+      if (kind === "tab") {
+        const cwd = shortPath(panes().find((p) => p.tab === tb.id && p.cwd)?.cwd ?? s.folder);
+        shownName = tb.named ? tb.name : s.machine ? cwd || this.tabLabel(tb) : this.tabLabel(tb);
+      } else {
+        shownName = s.name;
+      }
     }
     // Starts from the name shown in the list.
     const input = InputState.new({});
@@ -1544,9 +1570,17 @@ export default class Hmux extends View {
       if (!body.length) body.push(div().pl(24).py(2).text_size(10.5).text_color(t.dim).child("No sessions on this machine yet."));
       return v_flex().child(head).child(v_flex().children(body));
     });
+    let listH = 8;
+    for (const m of others) {
+      listH += ROW;
+      if (!this.expanded.has(`m:${m.name}`)) continue;
+      if (m.layout === "unavailable") listH += 22;
+      for (const sp of spaces()) if (sp.machine === m.name) listH += sp.tabs.length * 42;
+      if (localTabs().some((e) => e.tab.name === `login ${m.name}`)) listH += 42;
+    }
     return v_flex()
       .child(header)
-      .child(v_flex().id("hmux-machines-list").max_h(260).overflow_y_scrollbar().pt(2).children(rows));
+      .child(v_flex().id("hmux-machines-list").h(Math.min(260, listH)).flex_none().overflow_y_scrollbar().pt(2).children(rows));
   }
 
   // One session under its machine, in the same two-line design as the list:
@@ -1556,8 +1590,9 @@ export default class Hmux extends View {
   machineSessionRow(t, s, tb) {
     const here = tb.active && s.active;
     const hovered = this.machineHover === tb.id;
-    const title = tb.named ? tb.name : s.machine ? s.name : this.tabLabel(tb);
     const cwd = shortPath(panes().find((p) => p.tab === tb.id && p.cwd)?.cwd ?? s.folder);
+    const title = tb.named ? tb.name : cwd || this.tabLabel(tb);
+    const editing = this.editor(t, "tab", tb.id);
     const time = elapsed(tb.working_since ?? tb.changed_at);
     const fg = here ? t.accent_foreground : t.foreground;
     const sub = here ? t.accent_foreground : t.dim;
@@ -1597,13 +1632,20 @@ export default class Hmux extends View {
         if (!s.active) run("space.select", { id: s.id });
         run("tab.select", { id: tb.id });
       })
+      .on_mouse_up("left", (e, cx) => {
+        if (e.click_count >= 2) {
+          cx.stop_propagation();
+          this.startEdit("tab", tb.id, cx);
+        }
+      })
       .child(image(ICON.terminalMac).w(12).h(12).flex_none())
       .child(
         v_flex()
           .flex_1()
           .min_w(0)
           .gap(2)
-          .child(div().truncate().text_size(11).font_medium().text_color(fg).child(title))
+          .when(Boolean(editing), (el) => el.child(editing))
+          .when(!editing, (el) => el.child(div().truncate().text_size(11).font_medium().text_color(fg).child(title)))
           .child(
             h_flex().gap(6).items_center().min_w(0)
               .child(div().flex_1().min_w(0).truncate().text_size(9.5).text_color(sub).opacity(here ? 0.8 : 1).child(cwd))

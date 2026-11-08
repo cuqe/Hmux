@@ -1,0 +1,13 @@
+{
+  "layout:hmux": {
+    "cmd-1": "hmux.selectMachine:1",
+    "cmd-2": "hmux.selectMachine:2",
+    "cmd-3": "hmux.selectMachine:3",
+    "cmd-4": "hmux.selectMachine:4",
+    "cmd-5": "hmux.selectMachine:5",
+    "cmd-6": "hmux.selectMachine:6",
+    "cmd-7": "hmux.selectMachine:7",
+    "cmd-8": "hmux.selectMachine:8",
+    "cmd-9": "hmux.selectMachine:9"
+  }
+}
