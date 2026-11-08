@@ -27,6 +27,8 @@ const GROUPS_KEY = "hmux.groups"; // [{ id, name }]
 const ASSIGN_KEY = "hmux.groupOf"; // { [tabId]: groupId }
 const ORDER_KEY = "hmux.order"; // { u: [tabId…], <groupId>: [tabId…] }
 const UNGROUPED = "u";
+const PANE_DRAG = "hmux.paneDrag"; // { pane } while a pane tab is dragged
+const SIDEBAR_W = "hmux.sidebarW"; // the sidebar's live width (measured, layout px)
 const INBOX_MAX = 60;
 const INBOX_W = 320;
 const INBOX_H = 380;
@@ -55,6 +57,7 @@ const ICON = {
   folderMac: "mods/hmux/folder-macos.png",
   terminal: "mods/hmux/terminal.svg",
   tail: "mods/hmux/popover-tail.svg",
+  tailOutline: "mods/hmux/popover-tail-outline.svg",
 };
 const STATUS_LABEL = { working: "Working", blocked: "Needs you", done: "Done", idle: "Idle" };
 const INBOX_TEXT = { blocked: "Needs your input.", done: "Finished its work." };
@@ -366,7 +369,8 @@ export default class Hmux extends View {
         ),
       );
     const sideNode = findNode(layout(), "sidebar");
-    const sideW = sideNode?.hidden ? 168 : (sideNode?.size?.px ?? 232);
+    const measured = Number(shared(SIDEBAR_W) ?? 0);
+    const sideW = sidebarHidden ? 128 : (measured > 0 ? measured : (sideNode?.size?.px ?? 232));
     return h_flex()
       .id("hmux-top")
       .on_size_change((size) => {
@@ -383,10 +387,8 @@ export default class Hmux extends View {
           .child(iconButton(t, "hmux-top-sidebar", ICON.sidebar, () => run("layout.toggle", { id: "sidebar" }), 13, { active: !sidebarHidden }))
           .child(bell),
       )
-      .child(div().flex_none().w(8))
-      .child(div().flex_none().w(1).h(16).bg(t.border))
-      .child(div().flex_none().w(8))
-      // The session's folder, like cmux: the macOS folder icon and its path.
+      .when(!sidebarHidden, (el) => el.child(div().flex_none().w(1).h_full().bg(t.border)))
+      .child(div().flex_none().w(10))      // The session's folder, like cmux: the macOS folder icon and its path.
       .child(image(ICON.folderMac).w(14).h(14).flex_none())
       .child(div().flex_none().max_w(300).truncate().px(6).text_color(t.muted).child(cwd))
       .child(div().flex_1())
@@ -598,26 +600,34 @@ export default class Hmux extends View {
                     .child(div().truncate().text_size(11).text_color(t.dim).child(alive ? n.where : `${n.where} · ended`))
                     .child(div().text_size(11).text_color(t.dim).child(INBOX_TEXT[n.status] ?? "")),
                 )
-                // The delete button only shows under the pointer, centered.
-                .when(hovered, (el) =>
-                  el.child(
-                    div()
-                      .id(`hmux-inbox-x-${n.id}`)
-                      .flex_none()
-                      .size(18)
-                      .rounded(9)
-                      .flex()
-                      .items_center()
-                      .justify_center()
-                      .bg(t.foreground + "14")
-                      .hover((s) => s.bg(t.foreground + "26"))
-                      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-                      .on_click((_e, cx) => {
-                        cx.stop_propagation();
-                        setShared(INBOX_KEY, inbox().filter((x) => x.id !== n.id));
-                      })
-                      .child(svg(ICON.close).size(9).flex_none().text_color(t.muted)),
-                  ),
+                // The × column is always reserved, so the time never moves; the
+                // button itself only shows under the pointer.
+                .child(
+                  div()
+                    .flex_none()
+                    .size(18)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(hovered, (el) =>
+                      el.child(
+                        div()
+                          .id(`hmux-inbox-x-${n.id}`)
+                          .size(18)
+                          .rounded(9)
+                          .flex()
+                          .items_center()
+                          .justify_center()
+                          .bg(t.foreground + "14")
+                          .hover((s) => s.bg(t.foreground + "26"))
+                          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+                          .on_click((_e, cx) => {
+                            cx.stop_propagation();
+                            setShared(INBOX_KEY, inbox().filter((x) => x.id !== n.id));
+                          })
+                          .child(svg(ICON.close).size(9).flex_none().text_color(t.muted)),
+                      ),
+                    ),
                 );
             }),
           )
@@ -626,8 +636,8 @@ export default class Hmux extends View {
             .child(div().text_size(11).child("When an agent finishes or needs you, it shows up here.")),
       )
       )
-      .child(div().absolute().top(0).left(16).child(svg(ICON.tail).w(24).h(12).flex_none().text_color(t.border)))
-      .child(div().absolute().top(2).left(18).child(svg(ICON.tail).w(20).h(10).flex_none().text_color(t.popover)));
+      .child(div().absolute().top(0).left(16).child(svg(ICON.tail).w(24).h(9).flex_none().text_color(t.popover)))
+      .child(div().absolute().top(0).left(16).child(svg(ICON.tailOutline).w(24).h(9).flex_none().text_color(t.border)));
   }
 
   // ── right-click menus ──────────────────────────────────────────────────────
@@ -642,6 +652,40 @@ export default class Hmux extends View {
         null,
         ["Delete group", () => this.deleteGroup(g.id), true],
       ];
+    }
+    if (p.kind === "panetab") {
+      const move = (dir) => {
+        run("pane.focus", { pane: p.id });
+        run("pane.swap", { direction: dir });
+      };
+      return [
+        ["Focus", () => run("pane.focus", { pane: p.id })],
+        null,
+        ["Move left", () => move("left")],
+        ["Move right", () => move("right")],
+        ["Move up", () => move("up")],
+        ["Move down", () => move("down")],
+        null,
+        ["Close pane", () => run("pane.close", { pane: p.id }), true],
+      ];
+    }
+    if (p.kind === "machine") {
+      const m = machines().find((x) => x.name === p.name);
+      if (!m) return [];
+      const items = [];
+      if (m.layout === "unavailable") {
+        items.push(["Connect", () => run("tab.new", { argv: ["hc", "machine", "login", m.name], name: `login ${m.name}` })]);
+      } else {
+        items.push(["Open", () => {
+          const first = spaces().find((x) => x.machine === m.name);
+          if (first) run("space.select", { id: first.id });
+          else run("space.new", { machine: m.name });
+        }]);
+      }
+      items.push([`New space on ${m.name}`, () => run("space.new", { machine: m.name })]);
+      items.push(null);
+      items.push(["Disconnect", () => askToClose(`Disconnect from ${m.name}?`, "Herdr forgets this machine. Its terminals keep running there.", "Disconnect", { exec: ["hc", ["machine", "rm", m.name]] }), true]);
+      return items;
     }
     if (p.kind === "tab") {
       const s = all.find((x) => x.tabs.some((tb) => tb.id === p.id));
@@ -740,7 +784,12 @@ export default class Hmux extends View {
     const keep = () => closeOverlay(p.overlay);
     const yes = () => {
       closeOverlay(p.overlay);
-      run(p.command.name, p.command.args ?? {});
+      if (p.command.exec) {
+        const [cmd, args] = p.command.exec;
+        exec(cmd, args).catch(() => {});
+      } else {
+        run(p.command.name, p.command.args ?? {});
+      }
     };
     const button = (id, label, danger, onClick) =>
       h_flex().id(id).h(30).px(14).items_center().rounded(6)
@@ -786,6 +835,11 @@ export default class Hmux extends View {
       .id("hmux-sidebar")
       .relative()
       .size_full()
+      .on_size_change((size) => {
+        // The title bar's divider follows the sidebar's live width.
+        const w = Math.round(size.width / (settings()?.zoom ?? 1));
+        if (w > 0 && Math.abs(w - Number(shared(SIDEBAR_W) ?? 0)) >= 1) setShared(SIDEBAR_W, w);
+      })
       .text_size(12)
       .text_color(t.foreground)
       .on_mouse_move((e, cx) => {
@@ -1428,7 +1482,12 @@ export default class Hmux extends View {
           } else {
             const first = spaces().find((s) => s.machine === m.name);
             if (first) run("space.select", { id: first.id });
+            else run("space.new", { machine: m.name });
           }
+        })
+        .on_mouse_down("right", (e, cx) => {
+          cx.stop_propagation();
+          openMenu({ kind: "machine", name: m.name }, e.position);
         })
         .child(svg(ICON.server).size(11).flex_none().text_color(t.muted))
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(m.name))
@@ -1500,6 +1559,7 @@ export default class Hmux extends View {
     if (!p) return div();
     const pane = p.pane;
     const name = ((p.program?.agent || p.program?.shell) && p.program.name) || clean(p.title) || p.program?.name || "shell";
+    const dragging = shared(PANE_DRAG)?.pane === pane;
     const close = div()
       .id(`hmux-pane-x-${pane}`)
       .flex_none()
@@ -1523,6 +1583,28 @@ export default class Hmux extends View {
       .border_b(1)
       .border_color(t.border)
       .text_size(11)
+      .when(dragging, (el) => el.bg(t.hover).shadow_md())
+      // Drag by the tab itself: drop it on another pane's tab to move beside it.
+      .on_mouse_down("left", (_e, cx) => {
+        cx.stop_propagation();
+        setShared(PANE_DRAG, { pane, at: Date.now() });
+      })
+      .on_mouse_up("left", (_e, cx) => {
+        const d = shared(PANE_DRAG);
+        setShared(PANE_DRAG, null);
+        if (!d || d.pane === pane) return;
+        cx.stop_propagation();
+        const list = panes().map((x) => x.pane);
+        const from = list.indexOf(d.pane);
+        const to = list.indexOf(pane);
+        if (from < 0 || to < 0 || from === to) return;
+        run("pane.focus", { pane: d.pane });
+        run("pane.swap", { direction: to < from ? "left" : "right" });
+      })
+      .on_mouse_down("right", (e, cx) => {
+        cx.stop_propagation();
+        openMenu({ kind: "panetab", id: pane }, e.position);
+      })
       .on_click(() => run("pane.focus", { pane }))
       .child(svg(ICON.terminal).size(11).flex_none().text_color(p.focused ? t.foreground : t.dim))
       .child(div().flex_none().max_w(220).truncate().font_medium().text_color(p.focused ? t.foreground : t.muted).child(name))

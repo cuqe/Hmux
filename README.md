@@ -15,8 +15,8 @@ session menu uses Finder and `pbcopy`).
 ## What you get
 
 - **Title bar (32px):** sidebar toggle, notification bell with an unread badge,
-  a divider, then the macOS folder icon and the selected session's working path
-  — aligned with the pane tabs below. On the right, the sun/moon theme switch
+  a full-height divider at the sidebar's edge, then the macOS folder icon and
+  the selected session's working path. On the right, the sun/moon theme switch
   and new session. Drag the window by this bar; double-click maximizes.
 - **Agents:** one compact line per agent with its program icon and status; the
   header folds the whole section. Pinned agents stay on top, then by urgency:
@@ -46,12 +46,15 @@ session menu uses Finder and `pbcopy`).
     and Delete (deleting a group keeps its sessions, ungrouped).
 - **Pane tabs:** each pane carries its own cmux-style tab bar — terminal glyph,
   title, ×, then split and zoom tools; the focused tab is white with a thin
-  accent line on top.
+  accent line on top. Drag a tab by its title and drop it on another tab to
+  move beside it (the old centre grip is off); right-click a tab for Move
+  left/right/up/down and Close.
 - **Session footer:** status counts, the focused pane's folder and branch, and
   `This Mac + N` — each SSH machine with its connection state. Click an offline
   machine to open its login prompt (type the password or code right there; that
   session stays under `<machine> · login`), a connected one to jump to its
-  first space; the `+` opens Settings → Machines to add a connection.
+  first space (or make one). Right-click a machine for Connect/Open, New space
+  on `<name>`, and Disconnect; the `+` opens Settings → Machines.
 - **Panes:** a 20px header with the program, folder, branch and status; on
   hover, split right/down, zoom and close.
 - **Right-click a session:** go to it, rename, reset the name, split right or
